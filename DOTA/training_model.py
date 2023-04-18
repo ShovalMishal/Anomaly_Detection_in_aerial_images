@@ -52,27 +52,23 @@ def compute_metrics(p):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument("-p", "--path", help="the relative path to save the output database")
-    parser.add_argument("-trb", "--train_batch_size", help="The train batch size to be set")
-    parser.add_argument("-teb", "--eval_batch_size", help="The test batch size to be set")
+    parser.add_argument("-p", "--path", help="The relative path to the input database")
     parser.add_argument('-id', '--in_distribution_list', nargs='+', default=[])
 
     args = parser.parse_args()
-    # train_path = os.path.join(args.path, "train", "**")
+    # train on in distribution classes
     train_paths = [os.path.join(args.path, "train", label, "**") for label in args.in_distribution_list]
-    test_path = os.path.join(args.path, "test", "**")
-    # loading dataset
+    test_path = [os.path.join(args.path, "test", label, "**") for label in args.in_distribution_list]
+    # loading datasets
     bb_dataset = load_dataset("imagefolder", data_files={"train": train_paths, "test": test_path})
     train_ds = bb_dataset['train']
     test_ds = bb_dataset['test']
-    # # Filter the dataset to load only specific labels
-    # filtered_dataset = [item for item in train_ds if item['label'] in args.in_distribution_list]
     splits = train_ds.train_test_split(test_size=0.1)
     train_ds = splits['train']
     val_ds = splits['test']
     # loading model
     model_name_or_path = 'google/vit-base-patch16-224-in21k'
-    feature_extractor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
+    feature_extractor = ViTImageProcessor.from_pretrained(model_name_or_path)
     train_ds.set_transform(transform=transform)
     test_ds.set_transform(transform=transform)
     val_ds.set_transform(transform=transform)
@@ -111,6 +107,7 @@ if __name__ == '__main__':
         eval_dataset=val_ds,
         tokenizer=feature_extractor,
     )
+
     # train model
     train_results = trainer.train()
     trainer.save_model()
@@ -119,6 +116,6 @@ if __name__ == '__main__':
     trainer.save_state()
 
     # evaluate
-    metrics = trainer.evaluate(val_ds)
+    metrics = trainer.evaluate(test_ds)
     trainer.log_metrics("eval", metrics)
     trainer.save_metrics("eval", metrics)
