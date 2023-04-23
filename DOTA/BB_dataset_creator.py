@@ -26,6 +26,7 @@ class PatchesDatasetCreator:
         self.histogram_file_path = f"./statistics/classes_histogram_train_thresh_{self.threshold}.html" \
             if dota_dataset.is_train else f"./statistics/classes_histogram_test_thresh_{self.threshold}.html"
         os.makedirs(self.path, exist_ok=True)
+        os.makedirs("./statistics", exist_ok=True)
         for cls in self.dota_dataset.catToImgs.keys():
             os.makedirs(os.path.join(self.path, cls), exist_ok=True)
 
