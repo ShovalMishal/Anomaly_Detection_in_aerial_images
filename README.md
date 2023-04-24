@@ -1,4 +1,4 @@
-# Anomaly_Detection_in_aerial_images
+# Anomaly Detection in aerial images
 Using this repo current version, you can create BB datasets from the DOTA datasets, train VIT classifier and eventually based on both, you can create ood mechanism.
 ## Requirements
 Before starting you need to download DOTA-v2 dataset - you can use the following link https://captain-whu.github.io/DOTA/
