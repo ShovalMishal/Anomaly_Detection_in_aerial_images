@@ -1,4 +1,5 @@
 import os
+import time
 from argparse import ArgumentParser
 from datasets import load_dataset
 from transformers import ViTImageProcessor, ViTForImageClassification
@@ -8,6 +9,11 @@ import plotly.express as px
 from sklearn import metrics
 from sklearn.metrics import RocCurveDisplay
 import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+import sklearn
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def transform(example_batch):
     # Take a list of PIL images and turn them to pixel values
@@ -19,17 +25,18 @@ def transform(example_batch):
 
 
 def calculate_dataset_scores(test_ds):
-    scores = np.zeros(len(test_ds))
-    for i in range(len(test_ds)):
-        in_dist_img = test_ds[i]["pixel_values"].unsqueeze(0)
-        sequence_output = model.vit(in_dist_img)[0]
-        features = sequence_output[:, 0, :]
-        curr_scores = np.linalg.norm(train_in_dist_features - features.numpy(), axis=1)
-        scores[i] = np.min(curr_scores)
-    return scores
+    test_dl = DataLoader(test_ds, batch_size=64)
+    features_list = []
+    for batch in test_dl:
+        features = model.vit(batch['pixel_values'].to(device))[0][:, 0, :]
+        features_list.append(features)
+    all_features = torch.cat(features_list, axis=0)
+    scores = sklearn.metrics.pairwise_distances_argmin_min(all_features.cpu().numpy(), train_in_dist_features)
+    return scores[1]
 
 
 if __name__ == '__main__':
+    t = time.time()
     parser = ArgumentParser()
     parser.add_argument("-p", "--path", help="The relative path to the input database")
     parser.add_argument("-o", "--output_dir", help="The saved model path")
@@ -67,15 +74,16 @@ if __name__ == '__main__':
         label2id={c: str(i) for i, c in enumerate(labels)}
     )
     model.eval()
+    model = model.to(device)
     features_list = []
     id_scores = {}
     ood_scores = {}
     with torch.no_grad():
         for i in range(len(train_in_dist_ds)):
             in_dist_img = in_dist_ds[i]["pixel_values"].unsqueeze(0)
-            sequence_output = model.vit(in_dist_img)[0]
+            sequence_output = model.vit(in_dist_img.to(device))[0]
             features = sequence_output[:, 0, :]
-            features_list.append(features.numpy())
+            features_list.append(features.cpu().numpy())
         train_in_dist_features = np.concatenate(features_list, axis=0)
         id_scores = calculate_dataset_scores(test_in_dist_ds)
         id_score_fig = px.histogram(id_scores, nbins=round(np.sqrt(len(id_scores))))
@@ -100,4 +108,6 @@ if __name__ == '__main__':
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.show()
-
+        plt.savefig("./statistics/ROC_CURVE_OOD_VS_ID")
+        elapsed = time.time() - t
+        print('Elapsed: %s' % (elapsed))
