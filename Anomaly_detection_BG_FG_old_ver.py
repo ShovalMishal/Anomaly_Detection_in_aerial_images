@@ -237,7 +237,11 @@ if __name__ == '__main__':
     model = models.resnet50(pretrained=True)
     model.eval()
     model = model.to(device)
+<<<<<<< HEAD
     features_model = torch.nn.Sequential(*list(model.children())[:-1])
+=======
+    features_model = torch.nn.Sequential(*list(model.children())[:-1]).eval()
+>>>>>>> 91a906d (anomaly expirement and some initial arragments)
 
     # Create features for the training stage in a case it does not exist
     if not os.path.exists(args.output_dir + '/features_dict_old.pt'):

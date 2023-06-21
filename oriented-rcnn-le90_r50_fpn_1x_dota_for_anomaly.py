@@ -1,5 +1,9 @@
 dataset_type = 'DOTAv2Dataset'
+<<<<<<< HEAD
 data_root = './mmrotate/data/split_ss_dota/'
+=======
+data_root = './Anomaly_Detection_in_aerial_images/data/split_ss_dota/'
+>>>>>>> 91a906d (anomaly expirement and some initial arragments)
 backend_args = None
 patches_pipeline = [dict(type='mmdet.LoadAnnotations', with_bbox=True, box_type='qbox'),
                     dict(type='ConvertBoxType', box_type_mapping=dict(gt_bboxes='rbox'), _scope_='mmrotate'),
@@ -57,7 +61,11 @@ val_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
+<<<<<<< HEAD
         data_root='./mmrotate/data/split_ss_dota/',
+=======
+        data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
+>>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='val/annfiles/',
         data_prefix=dict(img_path='val/images/'),
         test_mode=True,
@@ -83,7 +91,11 @@ train_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
+<<<<<<< HEAD
         data_root='./mmrotate/data/split_ss_dota/',
+=======
+        data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
+>>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='train/annfiles/',
         data_prefix=dict(img_path='train/images/'),
         test_mode=True,
@@ -110,7 +122,11 @@ subtrain_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
+<<<<<<< HEAD
         data_root='./mmrotate/data/split_ss_dota/',
+=======
+        data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
+>>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='subtrain/annfiles/',
         data_prefix=dict(img_path='subtrain/images/'),
         test_mode=True,

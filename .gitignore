@@ -1,9 +1,7 @@
-MAFFAT/
-DOTA/bb_**
-DOTA/.idea
-DOTA/DOTA-v2
-DOTA/statistics
-DOTA/__pycache__
-DOTA/vit**
+.idea
+__pycache__
+data/**
+out/**
+oriented_rcnn_r50_fpn_1x_dota_le90-6d2b2ce0.pth
 
 
