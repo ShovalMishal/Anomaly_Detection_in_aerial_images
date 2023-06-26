@@ -19,6 +19,7 @@ from torchvision import models
 from mmdet.registry import TASK_UTILS
 from mmengine.structures import InstanceData
 from mmdet.structures.bbox import HorizontalBoxes
+from tqdm import tqdm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -154,7 +155,7 @@ def calculate_scores(test_features, train_features, k=3):
 def get_gt_bboxes_and_labels(gt_instances, image):
     bboxes = []
     labels = []
-    for bbox, label in zip(gt_instances.bboxes, gt_instances.labels):
+    for ind, (bbox, label) in enumerate(zip(gt_instances.bboxes, gt_instances.labels)):
         bbox = torch.squeeze(bbox.tensor)
         min_x = max(0, bbox[0] - bbox[2]/2)
         max_x = min(image.shape[1], bbox[0] + bbox[2] / 2)
@@ -167,7 +168,19 @@ def get_gt_bboxes_and_labels(gt_instances, image):
         if cropped_img.shape[1]!=0 and cropped_img.shape[2]!=0:
             bboxes.append(cropped_img)
             labels.append(label)
-    return bboxes, torch.tensor(labels)
+            print("This bbox " + str(ind) + "\n")
+            print("x_start is " + str(int(min_x - square_length_x / 2)) + "\n"
+                  "y_start is " + str(int(min_y - square_length_y / 2)) + "\n"
+                  "x_end is " + str(int(max_x + square_length_x / 2)) + "\n"
+                  "y_end is " + str(int(max_y + square_length_y / 2)) + "\n")
+        else:
+            print("This bbox is not included " + str(ind) + "\n")
+            print("x_start is " + str(int(min_x - square_length_x / 2)) + "\n"
+                "y_start is " + str(int(min_y - square_length_y / 2)) + "\n"
+                "x_end is " + str(int(max_x + square_length_x / 2)) + "\n"
+                "y_end is " + str(int(max_y + square_length_y / 2)) + "\n")
+    print("Num of boxes is " + str(len(labels)))
+    return bboxes, torch.tensor(labels).cpu().detach()
 
 
 def calculate_batch_features_and_labels(data_batch):
@@ -204,8 +217,8 @@ def calculate_batch_features_and_labels(data_batch):
             output = features_model(prep_all_patches)
             output = torch.flatten(output, 1)
 
-        patches_labels.append(filtered_labels)
-        images_patches_features.append(output)
+        patches_labels.append(filtered_labels.cpu().detach())
+        images_patches_features.append(output.cpu().detach())
     images_patches_features = torch.concat(images_patches_features, dim=0)
     patches_labels = torch.concat(patches_labels, dim=0)
     return images_patches_features, patches_labels
@@ -237,18 +250,14 @@ if __name__ == '__main__':
     model = models.resnet50(pretrained=True)
     model.eval()
     model = model.to(device)
-<<<<<<< HEAD
-    features_model = torch.nn.Sequential(*list(model.children())[:-1])
-=======
     features_model = torch.nn.Sequential(*list(model.children())[:-1]).eval()
->>>>>>> 91a906d (anomaly expirement and some initial arragments)
 
     # Create features for the training stage in a case it does not exist
     if not os.path.exists(args.output_dir + '/features_dict_old.pt'):
         data_loader = create_dataloader(cfg)
         features = []
         labels = []
-        for idx, data_batch in enumerate(data_loader):
+        for idx, data_batch in tqdm(enumerate((data_loader))):
             if data_batch['data_samples'][0].img_id in images_to_use:
                 images_to_use.remove(data_batch['data_samples'][0].img_id)
                 images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch)

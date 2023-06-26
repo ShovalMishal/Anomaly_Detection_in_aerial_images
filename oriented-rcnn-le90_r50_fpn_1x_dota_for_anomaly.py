@@ -1,9 +1,5 @@
 dataset_type = 'DOTAv2Dataset'
-<<<<<<< HEAD
-data_root = './mmrotate/data/split_ss_dota/'
-=======
 data_root = './Anomaly_Detection_in_aerial_images/data/split_ss_dota/'
->>>>>>> 91a906d (anomaly expirement and some initial arragments)
 backend_args = None
 patches_pipeline = [dict(type='mmdet.LoadAnnotations', with_bbox=True, box_type='qbox'),
                     dict(type='ConvertBoxType', box_type_mapping=dict(gt_bboxes='rbox'), _scope_='mmrotate'),
@@ -53,19 +49,15 @@ test_pipeline = [
 
 val_dataloader = dict(
     batch_size=20,
-    num_workers=2,
-    # num_workers=0,
-    persistent_workers=True,
-    # persistent_workers=False,
+    # num_workers=2,
+    num_workers=0,
+    # persistent_workers=True,
+    persistent_workers=False,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
-<<<<<<< HEAD
-        data_root='./mmrotate/data/split_ss_dota/',
-=======
         data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
->>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='val/annfiles/',
         data_prefix=dict(img_path='val/images/'),
         test_mode=True,
@@ -91,11 +83,7 @@ train_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
-<<<<<<< HEAD
-        data_root='./mmrotate/data/split_ss_dota/',
-=======
         data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
->>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='train/annfiles/',
         data_prefix=dict(img_path='train/images/'),
         test_mode=True,
@@ -114,7 +102,7 @@ train_dataloader = dict(
         ]))
 
 subtrain_dataloader = dict(
-    batch_size=1,
+    batch_size=2,
     num_workers=0,
     # persistent_workers=True,
     persistent_workers=False,
@@ -122,11 +110,7 @@ subtrain_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTAv2Dataset',
-<<<<<<< HEAD
-        data_root='./mmrotate/data/split_ss_dota/',
-=======
         data_root='./Anomaly_Detection_in_aerial_images/data/split_ss_dota/',
->>>>>>> 91a906d (anomaly expirement and some initial arragments)
         ann_file='subtrain/annfiles/',
         data_prefix=dict(img_path='subtrain/images/'),
         test_mode=True,
