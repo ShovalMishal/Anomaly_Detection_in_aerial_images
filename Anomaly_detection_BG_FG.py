@@ -1,7 +1,8 @@
+import json
+import math
 import os
 import time
 from argparse import ArgumentParser
-import sklearn
 from mmdet.models.utils import unpack_gt_instances
 import numpy as np
 from matplotlib import pyplot as plt
@@ -13,14 +14,14 @@ from mmrotate.utils import register_all_modules
 from mmengine.config import Config
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from sklearn import metrics
-from sklearn.metrics import RocCurveDisplay
 from torchvision import models
 from mmdet.registry import TASK_UTILS
 from mmengine.structures import InstanceData
 from mmdet.structures.bbox import HorizontalBoxes
 from tqdm import tqdm
 import skimage
+
+from results import plot_precision_recall_curve, plot_roc_curve, plot_scores_histograms
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -68,7 +69,7 @@ def calc_patches_indices(pyramid_levels: int, patch_size: int, scale_factor: flo
         curr_scale_patches_indices = compute_patches_indices_per_scale(curr_image_size,
                                                                        (patch_size, patch_size),
                                                                        scale_factor=scale)
-        curr_image_size = (int(scale_factor * curr_image_size[0]), int(scale_factor * curr_image_size[1]))
+        curr_image_size = (math.ceil(scale_factor * curr_image_size[0]), math.ceil(scale_factor * curr_image_size[1]))
         patch_ind = curr_scale_patches_indices.view(curr_scale_patches_indices.shape[0], 4)
         patches_indices_tensor.append(patch_ind)
     patches_indices_tensor = torch.cat(patches_indices_tensor, dim=0)
@@ -117,27 +118,18 @@ def preprocess_patches(patches):
     return normalized_patches
 
 
-def create_gaussian_pyramid_old(data, pyramid_levels: int = 5, scale_factor: float = 0.6,
-                            kernel_size: int = 3, kernel_sigma: int = 1):
-    current_level = torch.stack(data).float()
-    pyramid_batch = [current_level]
-    # show_img(current_level[0])
-    # create gaussian pyramid
-    for level in range(pyramid_levels - 1):
-        blurred = TF.gaussian_blur(current_level,
-                                   kernel_size=kernel_size, sigma=kernel_sigma)
-        downsampled = F.interpolate(blurred, scale_factor=scale_factor, mode='bilinear', align_corners=False)
-        pyramid_batch.append(downsampled)
-        # show_img(downsampled[0])
-        current_level = downsampled
-    return pyramid_batch
-
-def create_gaussian_pyramid(data: list, pyramid_levels, scale_factor):
+def create_gaussian_pyramid(data: list, pyramid_levels, scale_factor: float):
     all_pyramids = []
     for im_ind in range(len(data)):
-        curr_pyr = skimage.transform.pyramid_gaussian(data[im_ind].permute(1, 2, 0).numpy(), max_layer=pyramid_levels,
-                                                      downscale=1 / scale_factor)
-        all_pyramids.append(curr_pyr)
+        curr_pyr = skimage.transform.pyramid_gaussian(data[im_ind].numpy(), channel_axis=0, downscale=1 / scale_factor,
+                                                      max_layer=pyramid_levels - 1)
+        all_pyramids.append(list(curr_pyr))
+    pyramid_batch = []
+    for level_ind in range(pyramid_levels):
+        curr_level = [torch.from_numpy(np.multiply(im_pyr[level_ind], 255).clip(0, 255).astype(np.float32)) for im_pyr
+                      in all_pyramids]
+        pyramid_batch.append(torch.stack(curr_level, dim=0))
+    return pyramid_batch
 
 
 def calculate_scores_and_labels(test_features, labels, train_features, k):
@@ -158,7 +150,7 @@ def calculate_scores(test_features, train_features, k=3):
     return scores
 
 
-def convert_oriented_representation_to_bounding_square(oriented_representation):
+def convert_oriented_representation_to_bounding_square(oriented_representation, image_shape):
     h = oriented_representation.heights
     w = oriented_representation.widths
     max_dim_length = torch.cat([h.unsqueeze(0), w.unsqueeze(0)]).max(dim=0).values.unsqueeze(-1)
@@ -183,19 +175,20 @@ def slice_patches(image, all_labels, left_corners, right_corners):
 
 
 def get_gt_bboxes_and_labels(gt_instances, image):
-    bounding_square_left_corner, bounding_square_right_corner = convert_oriented_representation_to_bounding_square(gt_instances.bboxes)
+    bounding_square_left_corner, bounding_square_right_corner = convert_oriented_representation_to_bounding_square(
+        gt_instances.bboxes, image.shape)
     bboxes, labels = slice_patches(image, gt_instances.labels,
                                    bounding_square_left_corner, bounding_square_right_corner)
 
     return bboxes, torch.tensor(labels)
 
 
-def calculate_batch_features_and_labels(data_batch, pyramid_levels: int, patch_size: int, scale_factor: float,
+def calculate_batch_features_and_labels(bbox_assigner, formatted_patches_indices,
+                                        data_batch, pyramid_levels: int, patch_size: int, scale_factor: float,
                                         features_model, is_supervised=False):
-    pyramid_batch = create_gaussian_pyramid_old(data_batch['inputs'], pyramid_levels=pyramid_levels,
-                                            scale_factor=scale_factor,)
-    # pyramid_batch = create_gaussian_pyramid(data_batch['inputs'], pyramid_levels=pyramid_levels,
-    #                                          scale_factor=scale_factor,)
+    features_model.eval()
+    pyramid_batch = create_gaussian_pyramid(data_batch['inputs'], pyramid_levels=pyramid_levels,
+                                            scale_factor=scale_factor)
     # extract patches
     patches_accord_level = []
     for pyramid_level_data in pyramid_batch:
@@ -243,13 +236,18 @@ def calculate_batch_features_and_labels(data_batch, pyramid_levels: int, patch_s
         background_and_foreground_patches = torch.concat(
             [prep_patches_per_image, preprocesses_foreground_patches],
             dim=0).to(device)
-
-        with torch.no_grad():
-            output = features_model(background_and_foreground_patches)
-            output = torch.flatten(output, 1)
-
-        patches_labels.append(all_labels.cpu().detach())
-        images_patches_features.append(output.cpu().detach())
+        batch_size = 128
+        outs = []
+        for i in range(background_and_foreground_patches.shape[0] // batch_size + 1):
+            batch = background_and_foreground_patches[i * batch_size: (i + 1) * batch_size]
+            with torch.no_grad():
+                if batch.shape[0] > 0:
+                    output = features_model(batch).cpu().detach()
+                    output = output.flatten(1)
+                    outs.append(output)
+        batch_outputs_concatenated = torch.cat(outs)
+        images_patches_features.append(batch_outputs_concatenated.detach().cpu())
+        patches_labels.append(all_labels.detach().cpu())
     images_patches_features = torch.concat(images_patches_features, dim=0)
     patches_labels = torch.concat(patches_labels, dim=0)
     return images_patches_features, patches_labels
@@ -262,21 +260,18 @@ def printing_data_statistics(labels, is_train):
     print(title + " data contain " + str(fg_number) + " fg samples and " + str(bg_number) + " bg samples\n")
 
 
-def cache_features_dictionary(dataset_cfg, pyramid_levels: int, patch_size: int, scale_factor:float, dataset_type: str,
+def cache_features_dictionary(bbox_assigner, formatted_patches_indices, features_model, dataset_cfg,
+                              pyramid_levels: int, patch_size: int, scale_factor: float, dataset_type: str,
                               target_dictionary_path: str):
     data_loader = create_dataloader(dataset_cfg, mode=dataset_type)
     features = []
     labels = []
     for idx, data_batch in tqdm(enumerate(data_loader)):
-        images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch, pyramid_levels,
-                                                                                      patch_size, scale_factor,
-                                                                                      features_model, is_supervised=False)
+        images_patches_features, patches_labels = calculate_batch_features_and_labels(
+            bbox_assigner, formatted_patches_indices,
+            data_batch, pyramid_levels, patch_size, scale_factor, features_model, is_supervised=False)
         features.append(images_patches_features.cpu().detach())
         labels.append(patches_labels)
-        # code to remove:
-        for sub_idx in range(len(data_batch['data_samples'])):
-            if not data_batch['data_samples'][sub_idx].img_id in images_to_use:
-                raise ValueError(f'Unexpected image: {data_batch["data_samples"][0].img_id}')
 
     features = torch.concat(features, dim=0)
     labels = torch.concat(labels, dim=0)
@@ -286,16 +281,18 @@ def cache_features_dictionary(dataset_cfg, pyramid_levels: int, patch_size: int,
     torch.save(data, target_dictionary_path)
 
 
-def calculate_scores_and_labels_for_test_dataset(pyramid_levels, patch_size, scale_factor, dictionary, dataloader,
-                                                 features_model, k):
+def calculate_scores_and_labels_for_test_dataset(bbox_assigner, formatted_patches_indices, pyramid_levels, patch_size,
+                                                 scale_factor, dictionary,
+                                                 dataloader, features_model, k):
     scores = []
     labels = []
     for idx, data_batch in tqdm(enumerate(dataloader)):
-        if idx == 5:
-            break
-        images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch, pyramid_levels,
+        images_patches_features, patches_labels = calculate_batch_features_and_labels(bbox_assigner,
+                                                                                      formatted_patches_indices,
+                                                                                      data_batch, pyramid_levels,
                                                                                       patch_size, scale_factor,
-                                                                                      features_model, is_supervised=False)
+                                                                                      features_model,
+                                                                                      is_supervised=False)
         batch_scores, batch_labels = calculate_scores_and_labels(images_patches_features, patches_labels,
                                                                  dictionary, k)
         scores.append(batch_scores)
@@ -305,7 +302,7 @@ def calculate_scores_and_labels_for_test_dataset(pyramid_levels, patch_size, sca
     return scores, labels
 
 
-if __name__ == '__main__':
+def main():
     t = time.time()
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
@@ -313,7 +310,7 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--pyramid_levels", default=5, help="Number of pyramid levels")
     parser.add_argument("-sf", "--scale_factor", default=0.6, help="Scale factor between pyramid levels")
     parser.add_argument("-ps", "--patch_size", default=50, help="The patch size")
-    parser.add_argument("-k", "--k_value", default=3, help="Nearest Neighbours count.")
+    parser.add_argument("-k", "--k_values", type=int, nargs='+', help="Nearest Neighbours count.")
     parser.add_argument("-use-cached", "--use_cached", action='store_true',
                         help="If flagged, use the cached feature dict. "
                              "Otherwise, recalculate it every time you run the script.")
@@ -331,54 +328,47 @@ if __name__ == '__main__':
     model = models.resnet50(pretrained=True)
     model.eval()
     model = model.to(device)
-    features_model = torch.nn.Sequential(*list(model.children())[:-1]).eval()
+    features_model = torch.nn.Sequential(*list(model.children())[:-1])
+    features_model.eval()
 
     # Create features for the training stage in a case it does not exist
-    dictionary_path = os.path.join(args.output_dir, 'features_dict_new.pt')
+    dictionary_path = os.path.join(args.output_dir, 'features_dict_new_pyramid.pt')
     if not args.use_cached:
         print('Recaching features dictionary...')
-        cache_features_dictionary(cfg, args.pyramid_levels, args.patch_size, args.scale_factor,
+        cache_features_dictionary(bbox_assigner, formatted_patches_indices, features_model, cfg, args.pyramid_levels,
+                                  args.patch_size, args.scale_factor,
                                   dataset_type='subtrain', target_dictionary_path=dictionary_path)
     # Test stage
     data = torch.load(dictionary_path)
     printing_data_statistics(data['labels'], is_train=True)
 
-    val_data_loader = create_dataloader(cfg, mode='val')
-    k_value = args.k_value
+    val_data_loader = create_dataloader(cfg, mode='subval')
     k_to_auc = {}
+    k_to_ap = {}
 
-    for k_value in [1, 3, 5, 7, 11, 13]:
+    for k_value in args.k_values:
         print(f"Evaluating scores and labels for k={k_value}...")
-        scores, labels = calculate_scores_and_labels_for_test_dataset(args.pyramid_levels, args.patch_size,
+        scores, labels = calculate_scores_and_labels_for_test_dataset(bbox_assigner,
+                                                                      formatted_patches_indices,
+                                                                      args.pyramid_levels, args.patch_size,
                                                                       args.scale_factor, dictionary=data['features'],
                                                                       dataloader=val_data_loader,
                                                                       features_model=features_model,
                                                                       k=int(k_value))
 
         printing_data_statistics(labels, is_train=False)
-        # 1 to ood 0 to objects
-        print(f"Calculating AuC for k={k_value}...")
-        fpr, tpr, thresholds = metrics.roc_curve(labels.tolist(), scores.tolist())
-        print(fpr)
-        print(tpr)
-        auc = metrics.auc(fpr, tpr)
-        print("auc val is " + str(auc))
+        plot_scores_histograms(scores.tolist(), labels.tolist(), k_value, args.output_dir)
+        ap = plot_precision_recall_curve(labels, scores, k_value, args.output_dir)
+        auc = plot_roc_curve(labels, scores, k_value, args.output_dir)
         k_to_auc[k_value] = auc
-        RocCurveDisplay.from_predictions(
-            labels.tolist(),
-            scores.tolist(),
-            name=f"ood vs id",
-            color="darkorange",
-        )
-        plt.plot([0, 1], [0, 1], "k--", label="chance level (AUC = 0.5)")
-        plt.axis("square")
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.title("k = " + str(k_value))
-        plt.show()
-        # plt.savefig(args.output_dir + "/statistics/ROC_CURVE_OOD_VS_ID")
-    import json
+        k_to_ap[k_value] = ap
+
     with open(os.path.join(args.output_dir, 'k_to_auc_supervised.json'), 'w') as f:
         json.dump(k_to_auc, f, indent=4)
 
+    with open(os.path.join(args.output_dir, 'k_to_ap_supervised.json'), 'w') as f:
+        json.dump(k_to_ap, f, indent=4)
 
+
+if __name__ == '__main__':
+    main()

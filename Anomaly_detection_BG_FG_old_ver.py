@@ -165,7 +165,7 @@ def get_gt_bboxes_and_labels(gt_instances, image):
         square_length_x = abs(max_y - min_y) - abs(max_x - min_x) if abs(max_x - min_x) < abs(max_y - min_y) else 0
         cropped_img = image[:, int(min_y - square_length_y / 2):int(max_y + square_length_y / 2),
                       int(min_x - square_length_x / 2):int(max_x + square_length_x / 2)]
-        if cropped_img.shape[1]!=0 and cropped_img.shape[2]!=0:
+        if cropped_img.shape[1] != 0 and cropped_img.shape[2] != 0:
             bboxes.append(cropped_img)
             labels.append(label)
             print("This bbox " + str(ind) + "\n")
@@ -279,8 +279,8 @@ if __name__ == '__main__':
     scores = []
     labels = []
     for idx, data_batch in enumerate(val_data_loader):
-        if idx == 1000:
-            break
+        # if idx == 1000:
+        #     break
         images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch)
         batch_scores, batch_labels = calculate_scores_and_labels(images_patches_features, patches_labels,
                                                                  data["features"], int(args.k_value))
