@@ -153,6 +153,13 @@ def calculate_scores(test_features, train_features, k=3):
 def convert_oriented_representation_to_bounding_square(oriented_representation, image_shape):
     h = oriented_representation.heights
     w = oriented_representation.widths
+    # Correction of deviation of an object from the image
+    c1 = oriented_representation.centers[:, 0] - w / 2 < 0
+    c2 = oriented_representation.centers[:, 1] - h / 2 < 0
+    oriented_representation.centers[c1, 0] = (w[c1] / 2 + oriented_representation.centers[c1, 0])/2
+    oriented_representation.centers[c2, 1] = (h[c2] / 2 + oriented_representation.centers[c2, 1])/2
+    w[c1] = oriented_representation.centers[c1, 0]
+    h[c2] = oriented_representation.centers[c2, 1]
     max_dim_length = torch.cat([h.unsqueeze(0), w.unsqueeze(0)]).max(dim=0).values.unsqueeze(-1)
     left_corner = oriented_representation.centers - max_dim_length / 2.0
     right_corner = oriented_representation.centers + max_dim_length / 2.0
