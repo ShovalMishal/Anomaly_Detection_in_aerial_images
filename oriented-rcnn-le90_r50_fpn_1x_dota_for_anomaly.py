@@ -102,11 +102,11 @@ train_dataloader = dict(
         ]))
 
 subval_dataloader = dict(
-    batch_size=20,
-    # num_workers=2,
-    num_workers=0,
-    # persistent_workers=True,
-    persistent_workers=False,
+    batch_size=5,
+    num_workers=2,
+    # num_workers=0,
+    persistent_workers=True,
+    # persistent_workers=False,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -156,6 +156,7 @@ subtrain_dataloader = dict(
                 meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
                            'scale_factor'))
         ]))
+
 
 val_evaluator = dict(type='DOTAMetric', metric='mAP')
 test_evaluator = dict(type='DOTAMetric', metric='mAP_for_OOD_labels')
