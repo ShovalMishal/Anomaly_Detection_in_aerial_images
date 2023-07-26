@@ -46,7 +46,7 @@ def create_dataloader(cfg, mode="train"):
     return data_loader
 
 
-def show_img(img: torch.tensor, title=""):
+def show_img(img: torch.tensor):
     image_tensor = img.cpu()
     # Convert the tensor to a NumPy array
     image_np = image_tensor.numpy()
@@ -54,10 +54,7 @@ def show_img(img: torch.tensor, title=""):
     # (PyTorch tensors are typically in the channel-first format, while NumPy arrays are in channel-last format)
     image_np = np.transpose(image_np, (1, 2, 0)).astype(int)
     # Display the image using matplotlib
-    rgb_image = np.flip(image_np, axis=-1)
-    plt.imshow(rgb_image)
-    if title:
-        plt.title(title)
+    plt.imshow(image_np)
     plt.axis('off')
     plt.show()
 
@@ -104,8 +101,7 @@ def compute_patches_indices_per_scale(image_size, patch_stride, patch_size, scal
     indices_br_w = indices_tl_w + patch_size
 
     # Stack the index grids
-    # indices = torch.stack((indices_tl_h, indices_tl_w, indices_br_h, indices_br_w), dim=0)
-    indices = torch.stack((indices_tl_w, indices_tl_h, indices_br_w, indices_br_h), dim=0)
+    indices = torch.stack((indices_tl_h, indices_tl_w, indices_br_h, indices_br_w), dim=0)
     indices = indices.view(4,-1).T.float()
     indices *= 1 / scale_factor
     return indices.int()
