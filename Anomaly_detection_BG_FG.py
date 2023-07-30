@@ -221,7 +221,7 @@ def get_gt_bboxes_and_labels(gt_instances, image):
     bboxes, labels = slice_patches(image, gt_instances.labels,
                                    bounding_square_left_corner, bounding_square_right_corner)
 
-    return bboxes, torch.tensor(labels)
+    return bboxes, torch.tensor(labels), (bounding_square_left_corner, bounding_square_right_corner)
 
 
 def calculate_batch_features_and_labels(bbox_assigner, formatted_patches_indices,
@@ -259,7 +259,7 @@ def calculate_batch_features_and_labels(bbox_assigner, formatted_patches_indices
             # extract the image pixels for each background patch:
             background_patches = images_patches[image_idx][indices_of_bounding_boxes_with_iou_bellow_threshold]
             # extract foreground patches using blocked squared bounding box.
-            foreground_patches, foreground_labels = get_gt_bboxes_and_labels \
+            foreground_patches, foreground_labels, _ = get_gt_bboxes_and_labels \
                 (batch_gt_instances[image_idx], data_batch['inputs'][image_idx])
             preprocesses_foreground_patches = [preprocess_patches(torch.unsqueeze(gt_bbox, dim=0).float())
                                                for gt_bbox in foreground_patches]
@@ -354,7 +354,6 @@ def calculate_scores_and_labels_for_test_dataset(bbox_assigner, formatted_patche
 
 
 def main():
-    t = time.time()
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
     parser.add_argument("-o", "--output_dir", help="The saved model path")
