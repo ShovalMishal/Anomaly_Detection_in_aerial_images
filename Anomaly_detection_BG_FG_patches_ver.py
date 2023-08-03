@@ -3,6 +3,9 @@ import math
 import os
 import time
 from argparse import ArgumentParser
+
+import torchvision.datasets
+from PIL import Image
 from mmdet.models.utils import unpack_gt_instances
 import numpy as np
 from matplotlib import pyplot as plt
@@ -13,6 +16,7 @@ from mmdet.utils import register_all_modules as register_all_modules_mmdet
 from mmrotate.utils import register_all_modules
 from mmengine.config import Config
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torchvision import models
 from mmdet.registry import TASK_UTILS
 from mmengine.structures import InstanceData
@@ -20,7 +24,9 @@ from mmdet.structures.bbox import HorizontalBoxes
 from tqdm import tqdm
 import skimage
 
+from image_pyramid_patches_dataset import image_pyramid_patches_dataset
 from results import plot_precision_recall_curve, plot_roc_curve, plot_scores_histograms
+from utils import remove_empty_folders
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -46,7 +52,7 @@ def create_dataloader(cfg, mode="train"):
     return data_loader
 
 
-def show_img(img: torch.tensor):
+def show_img(img: torch.tensor, title=""):
     image_tensor = img.cpu()
     # Convert the tensor to a NumPy array
     image_np = image_tensor.numpy()
@@ -54,13 +60,16 @@ def show_img(img: torch.tensor):
     # (PyTorch tensors are typically in the channel-first format, while NumPy arrays are in channel-last format)
     image_np = np.transpose(image_np, (1, 2, 0)).astype(int)
     # Display the image using matplotlib
-    plt.imshow(image_np)
+    rgb_image = np.flip(image_np, axis=-1)
+    plt.imshow(rgb_image)
+    if title:
+        plt.title(title)
     plt.axis('off')
     plt.show()
 
 
 # calculate bboxes indices for all pyramid levels
-def calc_patches_indices(pyramid_levels: int, patch_size: int, scale_factor: float, patch_stride:float, image_size):
+def calc_patches_indices(pyramid_levels: int, patch_size: int, scale_factor: float, patch_stride: float, image_size):
     patches_indices_tensor = []
     curr_image_size = image_size
     for i in range(pyramid_levels):
@@ -89,7 +98,7 @@ def compute_patches_indices_per_scale_old(image_size, patch_size, scale_factor=1
     return corners.int()
 
 
-def compute_patches_indices_per_scale(image_size, patch_stride, patch_size, scale_factor:float=1.0):
+def compute_patches_indices_per_scale(image_size, patch_stride, patch_size, scale_factor: float = 1.0):
     stride = int(patch_size * patch_stride)
     # Create a meshgrid of indices
     grid_h, grid_w = torch.meshgrid(torch.arange(image_size[0]), torch.arange(image_size[1]))
@@ -102,10 +111,9 @@ def compute_patches_indices_per_scale(image_size, patch_stride, patch_size, scal
 
     # Stack the index grids
     indices = torch.stack((indices_tl_h, indices_tl_w, indices_br_h, indices_br_w), dim=0)
-    indices = indices.view(4,-1).T.float()
+    indices = indices.view(4, -1).T.float()
     indices *= 1 / scale_factor
     return indices.int()
-
 
 
 def split_images_into_patches_with_no_overlaps(images, patch_size):
@@ -220,84 +228,14 @@ def get_gt_bboxes_and_labels(gt_instances, image):
     return bboxes, torch.tensor(labels)
 
 
-def calculate_batch_features_and_labels(bbox_assigner, formatted_patches_indices,
-                                        data_batch, pyramid_levels: int, patch_size: int, batch_size: int,
-                                        scale_factor: float, features_model, patch_stride, is_supervised: bool = False):
+def calculate_batch_features_and_labels(data_batch, features_model):
     features_model.eval()
-    pyramid_batch = create_gaussian_pyramid(data_batch['inputs'], pyramid_levels=pyramid_levels,
-                                            scale_factor=scale_factor)
-    # extract patches
-    patches_accord_level = []
-    for pyramid_level_data in pyramid_batch:
-        patches = split_images_into_patches(pyramid_level_data,
-                                            patch_size, patch_stride)
-        patches_accord_level.append(patches)
-    images_patches = torch.cat(patches_accord_level, dim=1)
-    # extract ground truth labels per patch
-    gt_instances = unpack_gt_instances(data_batch['data_samples'])
-    batch_gt_instances, batch_gt_instances_ignore, _ = gt_instances
-
-    images_patches_features = []
-    patches_labels = []
-    for image_idx in range(images_patches.shape[0]):
-        # extract gt label for each patch
-        assign_result = bbox_assigner.assign(
-            formatted_patches_indices, batch_gt_instances[image_idx],
-            batch_gt_instances_ignore[image_idx])
-        # In case of test - inject fg patches and filter background with iou smaller than 0.3
-        if is_supervised:
-            # remove permanently labels and features with iou larger than 0.3, i.e. keep only background
-            # bounding boxes with gt_inds 0 is background. the threshold is in the config file.
-            indices_of_bounding_boxes_with_iou_bellow_threshold = torch.squeeze(
-                torch.nonzero(assign_result.gt_inds == 0))
-            # background_labels is class label for classes and -1 for background.
-            background_labels = assign_result.labels[indices_of_bounding_boxes_with_iou_bellow_threshold]
-            # extract the image pixels for each background patch:
-            background_patches = images_patches[image_idx][indices_of_bounding_boxes_with_iou_bellow_threshold]
-            # extract foreground patches using blocked squared bounding box.
-            foreground_patches, foreground_labels = get_gt_bboxes_and_labels \
-                (batch_gt_instances[image_idx], data_batch['inputs'][image_idx])
-            preprocesses_foreground_patches = [preprocess_patches(torch.unsqueeze(gt_bbox, dim=0).float())
-                                               for gt_bbox in foreground_patches]
-            # handling foreground
-            preprocesses_foreground_patches = torch.concat(preprocesses_foreground_patches, dim=0) \
-                    if len(preprocesses_foreground_patches) > 0 else torch.tensor([])
-            preprocesses_foreground_patches = preprocesses_foreground_patches.to(device)
-            fg_outputs = torch.tensor([])
-            with torch.no_grad():
-                if preprocesses_foreground_patches.shape[0] > 0:
-                    fg_outputs = features_model(preprocesses_foreground_patches).cpu().detach()
-                    fg_outputs = fg_outputs.flatten(1)
-        # in case of train - take all patches without injecting fg
-        else:
-            background_labels = assign_result.labels
-            background_patches = images_patches[image_idx]
-            foreground_labels = torch.tensor([])
-            fg_outputs = torch.tensor([])
-            print("The number of patches match to unique fg bboxes is " +
-                  str(torch.unique(assign_result.gt_inds[torch.nonzero(assign_result.gt_inds > 0)]).shape[0])
-                  + " out of " + str(batch_gt_instances[image_idx].labels.shape[0]))
-
-        # merge labels for later evaluation
-        all_labels = torch.concat((background_labels, foreground_labels), dim=0)
-        # handling bg
-        outs = []
-        for i in range(background_patches.shape[0] // batch_size + 1):
-            batch = background_patches[i * batch_size: (i + 1) * batch_size]
-            # preprocess patches for ResNet:
-            prep_batch = preprocess_patches(batch).to(device)
-            with torch.no_grad():
-                if batch.shape[0] > 0:
-                    bg_outputs = features_model(prep_batch).cpu().detach()
-                    bg_outputs = bg_outputs.flatten(1)
-                    outs.append(bg_outputs)
-        batch_bg_outputs_concatenated = torch.cat(outs)
-        batch_outputs_concatenated = torch.concat([batch_bg_outputs_concatenated, fg_outputs], dim=0)
-        images_patches_features.append(batch_outputs_concatenated.detach().cpu())
-        patches_labels.append(all_labels.detach().cpu())
-    images_patches_features = torch.concat(images_patches_features, dim=0)
-    patches_labels = torch.concat(patches_labels, dim=0)
-    return images_patches_features, patches_labels
+    with torch.no_grad():
+        outputs = features_model(data_batch[0].squeeze(dim=1).to(device)).cpu().detach()
+        outputs = outputs.flatten(1)
+    labels = data_batch[1]
+    # metadata = data_batch[2]
+    return outputs, labels  # , metadata
 
 
 def printing_data_statistics(labels, is_train):
@@ -307,18 +245,27 @@ def printing_data_statistics(labels, is_train):
     print(title + " data contain " + str(fg_number) + " fg samples and " + str(bg_number) + " bg samples\n")
 
 
-def cache_features_dictionary(bbox_assigner, formatted_patches_indices, features_model, dataset_cfg,
-                              pyramid_levels: int, patch_size: int, scale_factor: float, patch_stride, batch_size: int,
-                              dataset_type: str, target_dictionary_path: str):
-    data_loader = create_dataloader(dataset_cfg, mode=dataset_type)
+def cache_features_dictionary(features_model, dataset_cfg, target_dictionary_path: str, sampled_ratio:float):
+    patches_dataset_cfg = dataset_cfg.get("patches_dataset")
+    dataset_path = os.path.join(patches_dataset_cfg["path"], "subtrain", "images")
+    from image_pyramid_patches_dataset import transform
+    # patches_dataset = image_pyramid_patches_dataset(dataset_path)
+    remove_empty_folders(dataset_path)
+    patches_dataset = torchvision.datasets.DatasetFolder(dataset_path, extensions=(".png"), transform=transform,
+                                                         loader=Image.open)
+    data_loader = DataLoader(patches_dataset, batch_size=patches_dataset_cfg["batch_size"],
+                             shuffle=patches_dataset_cfg["shuffle"], num_workers=patches_dataset_cfg["num_workers"])
     features = []
     labels = []
     for idx, data_batch in tqdm(enumerate(data_loader)):
         images_patches_features, patches_labels = calculate_batch_features_and_labels(
-            bbox_assigner, formatted_patches_indices, data_batch, pyramid_levels, patch_size, batch_size,
-            scale_factor, features_model, patch_stride, is_supervised=False)
-        features.append(images_patches_features.cpu().detach())
-        labels.append(patches_labels)
+            data_batch, features_model)
+        # sample sampled_ratio out of the patches
+        random_indices = torch.randperm(images_patches_features.size(0))[:int(sampled_ratio*images_patches_features.size(0))]
+        sampled_features = torch.index_select(images_patches_features, 0, random_indices)
+        smapled_labels = torch.index_select(patches_labels, 0, random_indices)
+        features.append(sampled_features.cpu().detach())
+        labels.append(smapled_labels)
 
     features = torch.concat(features, dim=0)
     labels = torch.concat(labels, dim=0)
@@ -328,37 +275,43 @@ def cache_features_dictionary(bbox_assigner, formatted_patches_indices, features
     torch.save(data, target_dictionary_path)
 
 
-def calculate_scores_and_labels_for_test_dataset(bbox_assigner, formatted_patches_indices, pyramid_levels, patch_size,
-                                                 batch_size, scale_factor, patch_stride, dictionary, dataloader,
-                                                 features_model, k):
+def calculate_scores_and_labels_for_test_dataset(dictionary, dataloader, features_model, k):
+    high_score_bg_patch = torch.tensor([])
+    high_score_bg = float('-inf')
+    low_score_fg_patch = torch.tensor([])
+    low_score_fg = float('inf')
     scores = []
     labels = []
     for idx, data_batch in tqdm(enumerate(dataloader)):
-        images_patches_features, patches_labels = calculate_batch_features_and_labels(bbox_assigner,
-                                                                                      formatted_patches_indices,
-                                                                                      data_batch, pyramid_levels,
-                                                                                      patch_size, batch_size,
-                                                                                      scale_factor, features_model, patch_stride,
-                                                                                      is_supervised=True)
+        images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch, features_model)
         batch_scores, batch_labels = calculate_scores_and_labels(images_patches_features, patches_labels,
                                                                  dictionary, k)
+        # update the highest bg score and the lowest fg score
+        curr_high_score_bg = torch.max(batch_scores[torch.nonzero(batch_labels == 0)].squeeze(dim=1)).item()
+        if curr_high_score_bg > high_score_bg:
+            high_score_bg = curr_high_score_bg
+            high_score_bg_patch = data_batch[0][torch.nonzero(batch_scores == high_score_bg).item()].squeeze(dim=0)
+        curr_lowest_score_bg = torch.min(
+            batch_scores[torch.nonzero(batch_labels == 1)].squeeze(dim=1)).item() if torch.nonzero(
+            batch_labels == 1).size(0) > 0 else float('inf')
+        if curr_lowest_score_bg < low_score_fg:
+            low_score_fg = curr_lowest_score_bg
+            low_score_fg_patch = data_batch[0][torch.nonzero(batch_scores == low_score_fg).item()].squeeze(dim=0)
         scores.append(batch_scores)
         labels.append(batch_labels)
+    # add plot
+    show_img(high_score_bg_patch, "highest score bg")
+    show_img(low_score_fg_patch, "lowest score fg")
     scores = torch.concat(scores, axis=0)
     labels = torch.concat(labels, dim=0)
     return scores, labels
 
 
 def main():
-    t = time.time()
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
-    parser.add_argument("-o", "--output_dir", help="The saved model path")
-    parser.add_argument("-l", "--pyramid_levels", default=5, help="Number of pyramid levels")
-    parser.add_argument("-sf", "--scale_factor", default=0.6, help="Scale factor between pyramid levels")
-    parser.add_argument("-po", "--patch_stride", default=0.5, help="Stride between patches in %")
-    parser.add_argument("-ps", "--patch_size", default=50, help="The patch size")
-    parser.add_argument("-bs", "--batch_size", default=128, help="Batch size for model inference")
+    parser.add_argument("-o", "--output_dir", help="Statistics output dir")
+    parser.add_argument("-sr", "--sampled_ratio", default=0.6, help="Sampled ratio for the features dictionary")
     parser.add_argument("-k", "--k_values", type=int, nargs='+', help="Nearest Neighbours count.")
     parser.add_argument("-use-cached", "--use_cached", action='store_true',
                         help="If flagged, use the cached feature dict. "
@@ -366,14 +319,6 @@ def main():
 
     args = parser.parse_args()
     cfg = Config.fromfile(args.config)
-    # mmrotate initialization stuff.
-    register_all_modules_mmdet(init_default_scope=False)
-    register_all_modules(init_default_scope=False)
-
-    image_size = cfg["train_pipeline"][3]['scale']
-    formatted_patches_indices = calc_patches_indices(args.pyramid_levels, args.patch_size, args.scale_factor,
-                                                     args.patch_stride, image_size)
-    bbox_assigner = TASK_UTILS.build(cfg["patches_assigner"])
     model = models.resnet50(pretrained=True)
     model.eval()
     model = model.to(device)
@@ -381,27 +326,30 @@ def main():
     features_model.eval()
 
     # Create features for the training stage in a case it does not exist
-    dictionary_path = os.path.join(args.output_dir, 'features_dict_new_pyramid.pt')
+    dictionary_path = os.path.join(args.output_dir, 'features_dict_new_pyramid.pt')  # 'patches_dataset_dictionary.pt')
     if not args.use_cached:
         print('Recaching features dictionary...')
-        cache_features_dictionary(bbox_assigner, formatted_patches_indices, features_model, cfg, args.pyramid_levels,
-                                  args.patch_size, args.scale_factor, args.patch_stride, args.batch_size,
-                                  dataset_type='subtrain', target_dictionary_path=dictionary_path)
+        cache_features_dictionary(features_model, cfg, target_dictionary_path=dictionary_path, sampled_ratio=args.sampled_ratio)
     # Test stage
     data = torch.load(dictionary_path)
     printing_data_statistics(data['labels'], is_train=True)
 
-    val_data_loader = create_dataloader(cfg, mode='subval')
+    patches_dataset_cfg = cfg.get("patches_dataset")
+    dataset_path = os.path.join(patches_dataset_cfg["path"], "subval", "images")
+    from image_pyramid_patches_dataset import transform
+    # patches_dataset = image_pyramid_patches_dataset(dataset_path)
+    remove_empty_folders(dataset_path)
+    patches_dataset = torchvision.datasets.DatasetFolder(dataset_path, extensions=(".png"), transform=transform,
+                                                         loader=Image.open)
+    data_loader = DataLoader(patches_dataset, batch_size=patches_dataset_cfg["batch_size"],
+                             shuffle=patches_dataset_cfg["shuffle"], num_workers=patches_dataset_cfg["num_workers"])
     k_to_auc = {}
     k_to_ap = {}
 
     for k_value in args.k_values:
         print(f"Evaluating scores and labels for k={k_value}...")
-        scores, labels = calculate_scores_and_labels_for_test_dataset(bbox_assigner,
-                                                                      formatted_patches_indices,
-                                                                      args.pyramid_levels, args.patch_size, args.batch_size,
-                                                                      args.scale_factor, args.patch_stride, dictionary=data['features'],
-                                                                      dataloader=val_data_loader,
+        scores, labels = calculate_scores_and_labels_for_test_dataset(dictionary=data['features'],
+                                                                      dataloader=data_loader,
                                                                       features_model=features_model,
                                                                       k=int(k_value))
 

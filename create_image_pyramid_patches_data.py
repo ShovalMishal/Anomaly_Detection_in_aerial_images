@@ -2,6 +2,8 @@ import json
 from argparse import ArgumentParser
 import torch
 from torchvision.utils import save_image
+from tqdm import tqdm
+
 from Anomaly_detection_BG_FG import create_dataloader, create_gaussian_pyramid, split_images_into_patches, \
     compute_patches_indices_per_scale, show_img, get_gt_bboxes_and_labels
 from mmengine.config import Config
@@ -80,7 +82,7 @@ def create_image_pyramid_patches_dataset(args):
                                                 args.patch_stride, image_size)
     all_unfounded_fg_areas, all_unfounded_fg_aspect_ratio, all_founded_fg_areas, all_founded_fg_aspect_ratio = \
         [], [], [], []
-    for idx, data_batch in enumerate(data_loader):
+    for idx, data_batch in tqdm(enumerate(data_loader)):
         # show image
         # objects = util.parse_dota_poly(os.path.join(original_dataset_anns_path, data_batch['data_samples'][0].img_id+".txt"))
         # showAnns(objects, np.transpose(data_batch['inputs'][0].numpy(), (1, 2, 0)))
@@ -116,8 +118,8 @@ def create_image_pyramid_patches_dataset(args):
                 patches = patches[:, indices_of_bbs_with_iou_bellow_threshold]
             for patch_ind in range(patches.shape[1]):
                 patch = patches[0, patch_ind]
-                if(assigned_labels[patch_ind] != -1):
-                    show_img(patch, all_labels[assigned_labels[patch_ind]])
+                # if(assigned_labels[patch_ind] != -1):
+                    # show_img(patch, all_labels[assigned_labels[patch_ind]])
                 curr_patch_metadata, patch_name = save_patch(patch, patch_num, curr_image_id, args.scale_factor,
                                                              patches_indices_list[level_ind][patch_ind].tolist(),
                                                              level_ind, args.dataset_type,
@@ -184,7 +186,7 @@ def showAnns(objects, img):
 def main():
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
-    parser.add_argument("-d", "--dataset_dir", help="The saved model path")
+    parser.add_argument("-d", "--dataset_dir", help="The saved dataset path")
     parser.add_argument("-l", "--pyramid_levels", default=6, help="Number of pyramid levels")
     parser.add_argument("-sf", "--scale_factor", default=0.7, help="Scale factor between pyramid levels")
     parser.add_argument("-po", "--patch_stride", default=0.1, help="Stride between patches in %")

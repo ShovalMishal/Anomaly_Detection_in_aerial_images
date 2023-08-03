@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import torch
 import plotly.express as px
 from dota_dataset import DotaDataset
 import numpy as np
@@ -30,6 +30,37 @@ def create_count_histogram_accord_classes(dota_dataset: DotaDataset, classes_nam
     fig = px.histogram(list(counter.items()), x=0, y=1, labels={'0': 'labels', '1': 'labels'})
     fig.show()
     fig.write_html(f"./statistics/classes_counts_histogram.html")
+
+
+def get_unfounded_fg_areas_n_aspect_ratio(fg_gt_bboxes: torch.tensor, founded_fg_indices: torch.tensor):
+    unfounded_indices = torch.arange(0, fg_gt_bboxes.shape[0], 1)
+    unfounded_indices = unfounded_indices[~torch.eq(unfounded_indices[:, None], founded_fg_indices).any(dim=1)]
+    unfounded_areas = fg_gt_bboxes[unfounded_indices].areas
+    unfounded_heights = fg_gt_bboxes[unfounded_indices].heights
+    unfounded_widths = fg_gt_bboxes[unfounded_indices].widths
+    unfounded_aspect_ratio = unfounded_widths / unfounded_heights
+    founded_areas = fg_gt_bboxes[founded_fg_indices].areas
+    founded_heights = fg_gt_bboxes[founded_fg_indices].heights
+    founded_widths = fg_gt_bboxes[founded_fg_indices].widths
+    founded_aspect_ratio = founded_widths / founded_heights
+    return unfounded_areas, unfounded_aspect_ratio, founded_areas, founded_aspect_ratio
+
+
+def plot_fg_statistics(all_fg_areas: torch.tensor, all_fg_aspect_ratio: torch.tensor,
+                       is_unfounded: bool):
+    elements = all_fg_areas.size(0)
+    areas_title = f"Unfounded area sizes histogram - {elements}" if is_unfounded else f"Founded area sizes histogram - {elements}"
+    areas_fig = px.histogram(np.array(all_fg_areas),
+                             labels={'value': 'area size (log scale)', 'count': 'count'},
+                             nbins=4*round(np.sqrt(len(all_fg_areas))),
+                             title=areas_title)
+    areas_fig.show()
+    aspect_ratio_title = "Unfounded aspect ratio histogram" if is_unfounded else "Founded aspect ratio histogram"
+    aspect_ratio_fig = px.histogram(np.array(all_fg_aspect_ratio),
+                                    labels={'value': 'aspect_ratio (log scale)', 'count': 'count'},
+                                    nbins=4 * round(np.sqrt(len(all_fg_aspect_ratio))),
+                                    title=aspect_ratio_title)
+    aspect_ratio_fig.show()
 
 
 def run_statistics():
