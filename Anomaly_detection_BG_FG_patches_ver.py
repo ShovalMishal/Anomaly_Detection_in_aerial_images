@@ -172,8 +172,8 @@ def create_gaussian_pyramid(data: list, pyramid_levels, scale_factor: float):
 
 def calculate_scores_and_labels(test_features, labels, train_features, k):
     # set 1 for foreground and 0 for background
-    labels[torch.nonzero(labels >= 0)] = 1
-    labels[torch.nonzero(labels == -1)] = 0
+    # labels[torch.nonzero(labels >= 0)] = 1
+    # labels[torch.nonzero(labels == -1)] = 0
     scores = calculate_scores(test_features.cpu(), train_features.cpu(), k=k)
     return scores, labels
 
@@ -255,22 +255,25 @@ def cache_features_dictionary(features_model, dataset_cfg, target_dictionary_pat
                                                          loader=Image.open)
     data_loader = DataLoader(patches_dataset, batch_size=patches_dataset_cfg["batch_size"],
                              shuffle=patches_dataset_cfg["shuffle"], num_workers=patches_dataset_cfg["num_workers"])
-    features = []
     labels = []
+    # preallocate memory
+    sample_per_batch = int(data_loader.batch_size * sampled_ratio)
+    features = torch.zeros((len(data_loader)*sample_per_batch, 2048)).cpu().detach()
+
     for idx, data_batch in tqdm(enumerate(data_loader)):
         images_patches_features, patches_labels = calculate_batch_features_and_labels(
             data_batch, features_model)
         # sample sampled_ratio out of the patches
         random_indices = torch.randperm(images_patches_features.size(0))[:int(sampled_ratio*images_patches_features.size(0))]
         sampled_features = torch.index_select(images_patches_features, 0, random_indices)
-        smapled_labels = torch.index_select(patches_labels, 0, random_indices)
-        features.append(sampled_features.cpu().detach())
-        labels.append(smapled_labels)
-
-    features = torch.concat(features, dim=0)
-    labels = torch.concat(labels, dim=0)
-    labels[torch.nonzero(labels >= 0)] = 1
-    labels[torch.nonzero(labels == -1)] = 0
+        sampled_labels = torch.index_select(patches_labels, 0, random_indices)
+        # features.append(sampled_features.cpu().detach())
+        features[idx*sample_per_batch:sample_per_batch*(idx+1), :]=sampled_features.cpu().detach()
+        labels.append(sampled_labels)
+    # features=torch.cat(features, dim=0)
+    labels = torch.cat(labels, dim=0)
+    # labels[torch.nonzero(labels >= 0)] = 1
+    # labels[torch.nonzero(labels == -1)] = 0
     data = {'features': features, 'labels': labels}
     torch.save(data, target_dictionary_path)
 
@@ -311,7 +314,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
     parser.add_argument("-o", "--output_dir", help="Statistics output dir")
-    parser.add_argument("-sr", "--sampled_ratio", default=0.6, help="Sampled ratio for the features dictionary")
+    parser.add_argument("-sr", "--sampled_ratio", default=0.5, help="Sampled ratio for the features dictionary")
     parser.add_argument("-k", "--k_values", type=int, nargs='+', help="Nearest Neighbours count.")
     parser.add_argument("-use-cached", "--use_cached", action='store_true',
                         help="If flagged, use the cached feature dict. "
