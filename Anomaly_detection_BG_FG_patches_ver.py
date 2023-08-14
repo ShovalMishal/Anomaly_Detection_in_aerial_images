@@ -3,6 +3,8 @@ import math
 import os
 import time
 from argparse import ArgumentParser
+from datetime import datetime
+from typing import Dict
 
 import torchvision.datasets
 from PIL import Image
@@ -16,6 +18,7 @@ from mmdet.utils import register_all_modules as register_all_modules_mmdet
 from mmrotate.utils import register_all_modules
 from mmengine.config import Config
 import torch.nn.functional as F
+from torch.nn import Sequential
 from torch.utils.data import DataLoader
 from torchvision import models
 from mmdet.registry import TASK_UTILS
@@ -24,7 +27,7 @@ from mmdet.structures.bbox import HorizontalBoxes
 from tqdm import tqdm
 import skimage
 
-from image_pyramid_patches_dataset import image_pyramid_patches_dataset
+from image_pyramid_patches_dataset import image_pyramid_patches_dataset, transform_to_imshow
 from results import plot_precision_recall_curve, plot_roc_curve, plot_scores_histograms
 from utils import remove_empty_folders
 
@@ -52,7 +55,7 @@ def create_dataloader(cfg, mode="train"):
     return data_loader
 
 
-def show_img(img: torch.tensor, title=""):
+def show_img(img: torch.tensor, title="", path=""):
     image_tensor = img.cpu()
     # Convert the tensor to a NumPy array
     image_np = image_tensor.numpy()
@@ -65,7 +68,10 @@ def show_img(img: torch.tensor, title=""):
     if title:
         plt.title(title)
     plt.axis('off')
-    plt.show()
+    if path:
+        plt.savefig(path)
+    else:
+        plt.show()
 
 
 # calculate bboxes indices for all pyramid levels
@@ -171,11 +177,9 @@ def create_gaussian_pyramid(data: list, pyramid_levels, scale_factor: float):
 
 
 def calculate_scores_and_labels(test_features, labels, train_features, k):
-    # set 1 for foreground and 0 for background
-    # labels[torch.nonzero(labels >= 0)] = 1
-    # labels[torch.nonzero(labels == -1)] = 0
-    scores = calculate_scores(test_features.cpu(), train_features.cpu(), k=k)
-    return scores, labels
+    # set > 0 for foreground and 0 for background
+    scores = calculate_scores(test_features.to(device), train_features.to(device), k=k)
+    return scores.cpu(), labels.cpu()
 
 
 def calculate_scores(test_features, train_features, k=3):
@@ -228,7 +232,7 @@ def get_gt_bboxes_and_labels(gt_instances, image):
     return bboxes, torch.tensor(labels)
 
 
-def calculate_batch_features_and_labels(data_batch, features_model):
+def calculate_batch_features_and_labels(data_batch, features_model: Sequential):
     features_model.eval()
     with torch.no_grad():
         outputs = features_model(data_batch[0].squeeze(dim=1).to(device)).cpu().detach()
@@ -243,6 +247,33 @@ def printing_data_statistics(labels, is_train):
     bg_number = torch.nonzero(labels == 0).size()[0]
     title = "train" if is_train else "test"
     print(title + " data contain " + str(fg_number) + " fg samples and " + str(bg_number) + " bg samples\n")
+
+
+def get_outliers(scores, labels, dataset, output_dir, k, outliers_num=10):
+    min_k_fg_scores_indices_in_dataset = torch.tensor([])
+    # save high score bgs and low score fgs
+    bg_scores = scores[torch.nonzero(labels == 0).squeeze(dim=1)]
+    top_k_bg_scores, top_indices_bg_scores = torch.topk(bg_scores, k=outliers_num)
+    top_k_bg_scores_indices_in_dataset = torch.where(top_k_bg_scores.unsqueeze(1) == scores.unsqueeze(0))[1]
+    fg_scores = scores[torch.nonzero(labels > 0).squeeze(dim=1)]
+    if fg_scores.size(0) > 0:
+        min_k_fg_scores, min_indices_fg_scores = torch.topk(fg_scores, k=outliers_num, largest=False)
+        min_k_fg_scores_indices_in_dataset = torch.where(scores.unsqueeze(0) == min_k_fg_scores.unsqueeze(1))[1]
+    # save all outliers
+    path = os.path.join(output_dir, f"outliers_k{str(k)}")
+    os.makedirs(path, exist_ok=True)
+    save_outliers(indices=top_k_bg_scores_indices_in_dataset, dataset=dataset, path=path, is_bg=True)
+    save_outliers(indices=min_k_fg_scores_indices_in_dataset, dataset=dataset, path=path, is_bg=False)
+
+
+def save_outliers(indices, dataset, path, is_bg):
+    classes = dataset.classes
+    for i in range(indices.size(0)):
+        patch, label = dataset[indices[i]]
+        title = f"{i+1} highest score bg, class {classes[label]}" if is_bg else \
+            f"{i+1} lowest score fg, class {classes[label]}"
+        saved_path = os.path.join(path, f"outlier_bg_{i+1}") if is_bg else os.path.join(path, f"outlier_fg_{i+1}")
+        show_img(transform_to_imshow(patch), title=title, path=saved_path)
 
 
 def cache_features_dictionary(features_model, dataset_cfg, target_dictionary_path: str, sampled_ratio:float):
@@ -272,41 +303,34 @@ def cache_features_dictionary(features_model, dataset_cfg, target_dictionary_pat
         labels.append(sampled_labels)
     # features=torch.cat(features, dim=0)
     labels = torch.cat(labels, dim=0)
-    # labels[torch.nonzero(labels >= 0)] = 1
+    labels[torch.nonzero(labels > 0)] = 1
     # labels[torch.nonzero(labels == -1)] = 0
     data = {'features': features, 'labels': labels}
     torch.save(data, target_dictionary_path)
 
 
-def calculate_scores_and_labels_for_test_dataset(dictionary, dataloader, features_model, k):
-    high_score_bg_patch = torch.tensor([])
-    high_score_bg = float('-inf')
-    low_score_fg_patch = torch.tensor([])
-    low_score_fg = float('inf')
+def calculate_scores_and_labels_for_test_dataset(dictionary: Dict, dataloader: DataLoader, features_model: Sequential,
+                                                 k: int, output_dir: str, outliers_num: int):
     scores = []
     labels = []
     for idx, data_batch in tqdm(enumerate(dataloader)):
         images_patches_features, patches_labels = calculate_batch_features_and_labels(data_batch, features_model)
         batch_scores, batch_labels = calculate_scores_and_labels(images_patches_features, patches_labels,
                                                                  dictionary, k)
-        # update the highest bg score and the lowest fg score
-        curr_high_score_bg = torch.max(batch_scores[torch.nonzero(batch_labels == 0)].squeeze(dim=1)).item()
-        if curr_high_score_bg > high_score_bg:
-            high_score_bg = curr_high_score_bg
-            high_score_bg_patch = data_batch[0][torch.nonzero(batch_scores == high_score_bg).item()].squeeze(dim=0)
-        curr_lowest_score_bg = torch.min(
-            batch_scores[torch.nonzero(batch_labels == 1)].squeeze(dim=1)).item() if torch.nonzero(
-            batch_labels == 1).size(0) > 0 else float('inf')
-        if curr_lowest_score_bg < low_score_fg:
-            low_score_fg = curr_lowest_score_bg
-            low_score_fg_patch = data_batch[0][torch.nonzero(batch_scores == low_score_fg).item()].squeeze(dim=0)
         scores.append(batch_scores)
         labels.append(batch_labels)
-    # add plot
-    show_img(high_score_bg_patch, "highest score bg")
-    show_img(low_score_fg_patch, "lowest score fg")
-    scores = torch.concat(scores, axis=0)
+
+    scores = torch.concat(scores, dim=0)
     labels = torch.concat(labels, dim=0)
+    get_outliers(scores=scores, labels=labels, dataset=dataloader.dataset, output_dir=output_dir, k=k,
+                 outliers_num=outliers_num)
+    labels[torch.nonzero(labels > 0)] = 1
+    # save score and labels per k
+    with open(os.path.join(output_dir, f'k_{str(k)}_scores_and_labels.json'), 'w') as f:
+        k_dict = {}
+        k_dict["scores"] = scores.tolist()
+        k_dict["labels"] = labels.tolist()
+        json.dump(k_dict, f, indent=4)
     return scores, labels
 
 
@@ -354,7 +378,9 @@ def main():
         scores, labels = calculate_scores_and_labels_for_test_dataset(dictionary=data['features'],
                                                                       dataloader=data_loader,
                                                                       features_model=features_model,
-                                                                      k=int(k_value))
+                                                                      k=int(k_value),
+                                                                      output_dir=args.output_dir,
+                                                                      outliers_num=20)
 
         printing_data_statistics(labels, is_train=False)
         plot_scores_histograms(scores.tolist(), labels.tolist(), k_value, args.output_dir)

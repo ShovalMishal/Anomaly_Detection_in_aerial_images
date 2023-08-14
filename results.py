@@ -49,8 +49,8 @@ def plot_roc_curve(labels, scores, k_value, path: str = ""):
 
 
 def plot_scores_histograms(scores, labels, k_value, path):
-    normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label==1]
-    abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label < 1]
+    abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label==1]
+    normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label < 1]
     histogram1 = go.Histogram(x=normal_scores, name='normal_scores', marker=dict(color='blue'))
     histogram2 = go.Histogram(x=abnormal_scores, name='abnormal_scores', marker=dict(color='red'))
     fig = go.Figure(data=[histogram1, histogram2])

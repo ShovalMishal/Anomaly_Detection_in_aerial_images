@@ -3,8 +3,8 @@ data_root = './data/split_ss_dota/'
 backend_args = None
 patches_dataset= dict(
     path= "./data/patches_dataset/",
-    batch_size=32,
-    shuffle=True,
+    batch_size=128,
+    shuffle=False,
     num_workers=4
 )
 patches_pipeline = [dict(type='mmdet.LoadAnnotations', with_bbox=True, box_type='qbox'),
