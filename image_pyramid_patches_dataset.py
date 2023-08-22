@@ -1,13 +1,13 @@
 import json
 import os
 import torch
-import torchvision
 from torch.utils.data import Dataset
-import torch.nn.functional as F
-import torchvision.transforms.functional as TF
+
 from PIL import Image
 from torchvision.transforms import Compose
+import torchvision.transforms as transforms
 from mmrotate.datasets.dota import  DOTAv2Dataset
+
 mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
@@ -17,15 +17,11 @@ def transform_to_imshow(image):
     image=image*255
     return image.squeeze(dim=0)
 
-def transform_func(image):
-    resized_image = TF.resize(image, (224, 224), interpolation=Image.BILINEAR)
-    tensor_image = TF.to_tensor(resized_image)
-    # normalized_image = tensor_image / 255.0
-    normalized_image = (tensor_image - mean) / std
-    return normalized_image
 
-
-transform = Compose([transform_func])
+transform = Compose([transforms.RandomResizedCrop(224),
+                     transforms.ToTensor(),
+                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                     ])
 
 
 class image_pyramid_patches_dataset(Dataset):

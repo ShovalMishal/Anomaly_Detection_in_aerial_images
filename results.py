@@ -1,3 +1,5 @@
+import numpy as np
+import torch
 from matplotlib import pyplot as plt
 from sklearn import metrics
 from sklearn.metrics import RocCurveDisplay, PrecisionRecallDisplay, average_precision_score
@@ -5,6 +7,7 @@ import plotly.graph_objects as go
 
 
 def plot_precision_recall_curve(labels, scores, k_value: int, path: str = ""):
+    labels[torch.nonzero(labels > 0)] = 1
     # plot precision recall curve
     print(f"Calculating precision recall curve for k={k_value}...")
     precision, recall, _ = metrics.precision_recall_curve(labels.tolist(), scores.tolist())
@@ -22,10 +25,28 @@ def plot_precision_recall_curve(labels, scores, k_value: int, path: str = ""):
     return ap
 
 
-def plot_roc_curve(labels, scores, k_value, path: str = ""):
+def analyze_roc_curve(labels, scores, k_value, desired_tpr=0.95):
+    labels[torch.nonzero(labels > 0)] = 1
     # plot roc curve
     print(f"Calculating AuC for k={k_value}...")
     fpr, tpr, thresholds = metrics.roc_curve(labels.tolist(), scores.tolist())
+    threshold_idx = torch.argmax(tpr >= desired_tpr)
+    threshold = thresholds[threshold_idx]
+    chosen_fpr = fpr[threshold_idx]
+    chosen_tpr = tpr[threshold_idx]
+    relevant_indices_tpr_95 = np.where((scores >= threshold).astype(int) == 1)
+    return threshold, chosen_fpr, chosen_tpr, relevant_indices_tpr_95
+
+def plot_roc_curve(labels, scores, k_value, path: str = "", desired_tpr=0.95):
+    labels[torch.nonzero(labels > 0)] = 1
+    # plot roc curve
+    print(f"Calculating AuC for k={k_value}...")
+    fpr, tpr, thresholds = metrics.roc_curve(labels.tolist(), scores.tolist())
+    threshold_idx = torch.argmax(tpr >= desired_tpr)
+    threshold = thresholds[threshold_idx]
+    chosen_fpr = fpr[threshold_idx]
+    chosen_tpr = tpr[threshold_idx]
+    relevant_indices_tpr_95 =  np.where((scores >= threshold).astype(int) == 1)
     auc = metrics.auc(fpr, tpr)
     print("auc val is " + str(auc))
 
@@ -45,12 +66,12 @@ def plot_roc_curve(labels, scores, k_value, path: str = ""):
     if path:
         plt.savefig(path + "/statistics/pyramid_func_result/k" + str(k_value) + "_ROC.png")
     plt.show()
-    return auc
+    return auc, threshold, chosen_fpr, chosen_tpr, relevant_indices_tpr_95
 
 
 def plot_scores_histograms(scores, labels, k_value, path):
-    abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label==1]
-    normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label < 1]
+    abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label>1]
+    normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label ==0]
     histogram1 = go.Histogram(x=normal_scores, name='normal_scores', marker=dict(color='blue'))
     histogram2 = go.Histogram(x=abnormal_scores, name='abnormal_scores', marker=dict(color='red'))
     fig = go.Figure(data=[histogram1, histogram2])
