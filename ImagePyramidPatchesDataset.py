@@ -24,7 +24,7 @@ transform = Compose([transforms.RandomResizedCrop(224),
                      ])
 
 
-class image_pyramid_patches_dataset(Dataset):
+class image_pyramid_patches_dataset(DatasetFolder):
     def __init__(self, root_dir):
         self.root_dir = root_dir
         self.metadata_path = os.path.join(self.root_dir, "metadata")
