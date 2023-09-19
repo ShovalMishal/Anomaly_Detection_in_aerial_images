@@ -1,5 +1,8 @@
 # Anomaly Detection in aerial images
-Using this repo current version, you can create an anomaly detection experiment where the normal label is background and the abnormal is foreground/OOD.
+Using this repo current version, you can train the full OOD detection pipeline.
+First, create an anomaly detection experiment where the normal label is background and the abnormal is foreground/OOD.
+Then, train the classifier on the anomaly detection results.
+
 ## Requirements
 You should create repositories folder containing this repo, mmrotate and mmdet repos.
 Before starting you need to download DOTA-v2 dataset - you can use the following link https://captain-whu.github.io/DOTA/
@@ -9,7 +12,7 @@ Next, you need to run the preprocess of DOTA dataset based on https://github.com
 ## Preprocess Data
 First, we need to create the image pyramid patches dataset.
 For this manner you should run the following command:
-python create_image_pyramid_patches_data.py -c <./Anomaly_Detection_in_aerial_images/config.py> -d <./data/patches_dataset/> --dataset_type <subtrain/subval>
+python create_image_pyramid_patches_data.py -c <./Anomaly_Detection_in_aerial_images/config.py> -d <./data/patches_dataset/> --dataset_type <subtrain/subval/subtest>
 There are several flags for this command:
 * ---config The relative path to the cfg file
 * --dataset_dir The saved dataset path
@@ -21,13 +24,12 @@ There are several flags for this command:
 
 - please note you have updated the config.py with the right paths!!
 
-## Performing Anomaly detection experiment
+## Performing OOD experiment
 Run the following command:
-python Anomaly_detection_BG_FG_patches_ver.py -c <./Anomaly_Detection_in_aerial_images/config.py> -o <output_dir> -k <k_values with subspaces>
-Then, you create the features dictionary and finally get the test results (Roc curve and precision-recall curve)
+python FullOODPipeline.py -c ./Anomaly_Detection_in_aerial_images/config.py -o ./Anomaly_Detection_in_aerial_images/out
+Then, you create the features dictionary, inclusion files (files with samples we use in next stages), labels and scores files (to calculate those only once)
+and finally get the test results (Roc curve and precision-recall curve) for the anomaly detetction stage.
+After, the classifier is fine-tuned for the OOD stage.
 There are several flags for this command:
 * --config The relative path to the cfg file
-* --output_dir Statistics output dir
-* --sampled_ratio Sampled ratio for the features dictionary
-* -k_values Nearest Neighbours count values
-* -use-cached If flagged, use the cached features. Otherwise, recalculate it every time you run the script.
+* --output_dir All files are saved in this path.
