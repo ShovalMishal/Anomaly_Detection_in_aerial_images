@@ -1,3 +1,4 @@
+import os
 from argparse import ArgumentParser
 import torch
 from mmengine.config import Config
@@ -22,12 +23,13 @@ class FullODDPipeline:
         self.classifier = self.classifier()
 
     def train(self):
+        os.makedirs(os.path.join(self.output_dir, "train"), exist_ok=True)
         self.anomaly_detector.train()
         self.classifier.initiate_trainer(classifier_cfg=self.classifier_cfg, dataset_cfg=self.dataset_cfg, output_dir=self.output_dir)
         self.classifier.train()
 
     def test(self):
-        pass
+        os.makedirs(os.path.join(self.output_dir, "test"), exist_ok=True)
 
 
 def main():

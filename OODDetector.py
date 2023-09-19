@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 from enum import Enum
@@ -18,6 +20,7 @@ class OODDatasetType(Enum):
 class OODDetector:
     def __init__(self, model):
         self.model = model
+        os.makedirs(os.path.join(self.output_dir, "train/OOD"), exist_ok=True)
 
     def score_samples(self, dataset_type: OODDatasetType = OODDatasetType.IN_DISTRIBUTION):
         pass

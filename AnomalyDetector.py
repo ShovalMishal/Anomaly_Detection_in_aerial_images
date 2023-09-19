@@ -33,6 +33,7 @@ class AnomalyDetector:
     """Abstract class of anomaly detector. It receives output dir path, dataset configuration and embedder configuration"""
 
     def __init__(self, output_dir, dataset_cfg, embedder_cfg):
+        os.makedirs(os.path.join(self.output_dir, "train/anomaly_detection_result"), exist_ok=True)
         self.output_dir = output_dir
         self.dataset_cfg = dataset_cfg
         self.embedder = {'resnet': ResnetEmbedder}[embedder_cfg.type]
