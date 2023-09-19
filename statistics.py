@@ -32,7 +32,7 @@ def create_count_histogram_accord_classes(dota_dataset: DotaDataset, classes_nam
     fig.write_html(f"./statistics/classes_counts_histogram.html")
 
 
-def get_unfounded_fg_areas_n_aspect_ratio(fg_gt_bboxes: torch.tensor, founded_fg_indices: torch.tensor):
+def get_unfound_fg_areas_n_aspect_ratio(fg_gt_bboxes: torch.tensor, founded_fg_indices: torch.tensor):
     unfounded_indices = torch.arange(0, fg_gt_bboxes.shape[0], 1)
     unfounded_indices = unfounded_indices[~torch.eq(unfounded_indices[:, None], founded_fg_indices).any(dim=1)]
     unfounded_areas = fg_gt_bboxes[unfounded_indices].areas
@@ -47,15 +47,15 @@ def get_unfounded_fg_areas_n_aspect_ratio(fg_gt_bboxes: torch.tensor, founded_fg
 
 
 def plot_fg_statistics(all_fg_areas: torch.tensor, all_fg_aspect_ratio: torch.tensor,
-                       is_unfounded: bool):
+                       is_unfound: bool):
     elements = all_fg_areas.size(0)
-    areas_title = f"Unfounded area sizes histogram - {elements}" if is_unfounded else f"Founded area sizes histogram - {elements}"
+    areas_title = f"Unfound area sizes histogram - {elements}" if is_unfound else f"Founded area sizes histogram - {elements}"
     areas_fig = px.histogram(np.array(all_fg_areas),
                              labels={'value': 'area size (log scale)', 'count': 'count'},
                              nbins=4*round(np.sqrt(len(all_fg_areas))),
                              title=areas_title)
     areas_fig.show()
-    aspect_ratio_title = "Unfounded aspect ratio histogram" if is_unfounded else "Founded aspect ratio histogram"
+    aspect_ratio_title = "Unfound aspect ratio histogram" if is_unfound else "Founded aspect ratio histogram"
     aspect_ratio_fig = px.histogram(np.array(all_fg_aspect_ratio),
                                     labels={'value': 'aspect_ratio (log scale)', 'count': 'count'},
                                     nbins=4 * round(np.sqrt(len(all_fg_aspect_ratio))),

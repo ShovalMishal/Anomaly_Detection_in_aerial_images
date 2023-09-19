@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from datasets import load_dataset, load_metric
 from PIL import ImageDraw, ImageFont, Image
+from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments, Trainer
 
 
 def show_examples(ds, seed: int = 1234, examples_per_class: int = 3, size=(350, 350)):
@@ -93,7 +94,7 @@ if __name__ == '__main__':
         save_total_limit=2,
         remove_unused_columns=False,
         push_to_hub=False,
-        report_to='tensorboard',
+        report_to=['tensorboard'],
         load_best_model_at_end=True,
     )
 

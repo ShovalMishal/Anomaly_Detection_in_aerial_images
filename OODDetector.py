@@ -16,12 +16,13 @@ class OODDatasetType(Enum):
 
 
 class OODDetector:
-    def __init__(self, model, id_dataloader, ood_dataloader):
+    def __init__(self, model):
         self.model = model
-        self.id_dataloader = id_dataloader
-        self.ood_dataloader = ood_dataloader
 
     def score_samples(self, dataset_type: OODDatasetType = OODDatasetType.IN_DISTRIBUTION):
+        pass
+
+    def train(self):
         pass
 
 
