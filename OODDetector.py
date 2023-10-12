@@ -1,12 +1,13 @@
 import os
+import pickle
 
 import torch
 import numpy as np
 from enum import Enum
+
 from torch.autograd import Variable
 import torch.nn as nn
-import torch.nn.functional as F
-
+from tqdm import tqdm
 
 DEFAULT_ODIN_TEMP = 1000
 DEFAULT_ODIN_NOISE_MAGNITUDE = 1e-3
@@ -17,12 +18,16 @@ class OODDatasetType(Enum):
     OUT_OF_DISTRIBUTION = 1
 
 
-class OODDetector:
-    def __init__(self, model):
-        self.model = model
-        os.makedirs(os.path.join(self.output_dir, "train/OOD"), exist_ok=True)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    def score_samples(self, dataset_type: OODDatasetType = OODDatasetType.IN_DISTRIBUTION):
+
+class OODDetector:
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+        os.makedirs(os.path.join(self.output_dir, "train/OOD"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_dir, "test/OOD"), exist_ok=True)
+
+    def score_samples(self, dataloader):
         pass
 
     def train(self):
@@ -30,9 +35,10 @@ class OODDetector:
 
 
 class ODINOODDetector(OODDetector):
-    def __init__(self, model, id_dataloader, ood_dataloader, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
-                 temperature=DEFAULT_ODIN_TEMP,):
-        super().__init__(model, id_dataloader, ood_dataloader)
+    def __init__(self, output_dir, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
+                 temperature=DEFAULT_ODIN_TEMP, ):
+        super().__init__(output_dir)
+        self.model = None
         self.epsilon = epsilon
         self.temperature = temperature
 
@@ -42,7 +48,7 @@ class ODINOODDetector(OODDetector):
         inputs = inputs.cuda()
         inputs.retain_grad()
 
-        outputs = self.model(inputs)
+        outputs = self.model(inputs)["logits"]
 
         maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
 
@@ -59,7 +65,7 @@ class ODINOODDetector(OODDetector):
 
         # Adding small perturbations to images
         tempInputs = torch.add(inputs.data, -self.epsilon, gradient)
-        outputs = self.model(Variable(tempInputs))
+        outputs = self.model(Variable(tempInputs))["logits"]
         outputs = outputs / self.temperature
         # Calculating the confidence after adding perturbations
         nnOutputs = outputs.data.cpu()
@@ -67,15 +73,60 @@ class ODINOODDetector(OODDetector):
         nnOutputs = nnOutputs - np.max(nnOutputs, axis=1, keepdims=True)
         nnOutputs = np.exp(nnOutputs) / np.sum(np.exp(nnOutputs), axis=1, keepdims=True)
         scores = np.max(nnOutputs, axis=1)
-        return torch.from_numpy(scores)
+        return torch.from_numpy(scores), torch.from_numpy(maxIndexTemp)
 
-    def score_samples(self, dataset_type: OODDatasetType = OODDatasetType.IN_DISTRIBUTION):
-        data_loader = {OODDatasetType.IN_DISTRIBUTION: self.id_dataloader,
-                       OODDatasetType.OUT_OF_DISTRIBUTION: self.ood_dataloader}[dataset_type]
+    def score_samples(self, dataloader):
         all_scores = []
-        for batch in data_loader:
-            images, labels = batch[0], batch[1]
-            scores = self.calculate_odin_scores(images)
+        all_labels = []
+        all_preds = []
+        cache_dir = '/tmp/odin_scores/'
+        cache_index = 0
+        for batch in tqdm(dataloader):
+            images = batch['pixel_values']
+            labels = batch['labels']
+            scores, pred_labels = self.calculate_odin_scores(images.to(device))
             all_scores.append(scores)
-        return torch.cat(all_scores)
+            all_labels.append(labels)
+            all_preds.append(pred_labels)
+            if len(all_scores) > 1000:
+                with open(os.path.join(cache_dir, f'all_scores_cache_{cache_index}.pkl'), 'wb') as f:
+                    pickle.dump(all_scores, f)
+                with open(os.path.join(cache_dir, f'all_labels_cache_{cache_index}.pkl'), 'wb') as f:
+                    pickle.dump(all_labels, f)
+                with open(os.path.join(cache_dir, f'all_preds_cache_{cache_index}.pkl'), 'wb') as f:
+                    pickle.dump(all_preds, f)
+                all_scores = []
+                all_labels = []
+                all_preds = []
+                cache_index += 1
+        # cache leftovers:
+        with open(os.path.join(cache_dir, f'all_scores_cache_{cache_index}.pkl'), 'wb') as f:
+            pickle.dump(all_scores, f)
+        with open(os.path.join(cache_dir, f'all_labels_cache_{cache_index}.pkl'), 'wb') as f:
+            pickle.dump(all_labels, f)
+        with open(os.path.join(cache_dir, f'all_preds_cache_{cache_index}.pkl'), 'wb') as f:
+            pickle.dump(all_preds, f)
+        all_scores_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_scores_cache_')]
+        all_scores_caches.sort(key=lambda x: int(x.split('all_scores_cache_')[-1].split('.pkl')[0]))
+        all_scores = []
+        for cache_name in all_scores_caches:
+            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
+                all_scores.append(pickle.load(f))
+        all_scores = sum(all_scores, [])
 
+        all_labels_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_labels_cache_')]
+        all_labels_caches.sort(key=lambda x: int(x.split('all_labels_cache_')[-1].split('.pkl')[0]))
+        all_labels = []
+        for cache_name in all_labels_caches:
+            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
+                all_labels.append(pickle.load(f))
+        all_labels = sum(all_labels, [])
+
+        all_preds_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_preds_cache_')]
+        all_preds_caches.sort(key=lambda x: int(x.split('all_preds_cache_')[-1].split('.pkl')[0]))
+        all_preds = []
+        for cache_name in all_preds_caches:
+            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
+                all_preds.append(pickle.load(f))
+        all_preds = sum(all_preds, [])
+        return torch.cat(all_scores, dim=0), torch.cat(all_labels, dim=0), torch.cat(all_preds, dim=0)

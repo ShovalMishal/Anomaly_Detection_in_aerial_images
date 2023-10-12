@@ -18,6 +18,9 @@ from matplotlib.collections import PatchCollection
 import numpy as np
 from statistics import get_unfound_fg_areas_n_aspect_ratio, plot_fg_statistics
 import skimage
+import DOTA_devkit.dota_utils as util
+from utils import show_img
+
 
 def convert_oriented_representation_to_bounding_square(oriented_representation, image_shape):
     h = oriented_representation.heights
@@ -68,7 +71,7 @@ def compute_patches_indices_per_scale(image_size, patch_stride, patch_size, scal
     indices_br_w = indices_tl_w + patch_size
 
     # Stack the index grids
-    indices = torch.stack((indices_tl_h, indices_tl_w, indices_br_h, indices_br_w), dim=0)
+    indices = torch.stack((indices_tl_w, indices_tl_h, indices_br_w, indices_br_h), dim=0)
     indices = indices.view(4, -1).T.float()
     indices *= 1 / scale_factor
     return indices.int()
@@ -210,7 +213,7 @@ def create_image_pyramid_patches_dataset(args):
             for patch_ind in range(patches.shape[1]):
                 patch = patches[0, patch_ind]
                 # if(assigned_labels[patch_ind] != -1):
-                # show_img(patch, all_labels[assigned_labels[patch_ind]])
+                #     show_img(patch, all_labels[assigned_labels[patch_ind]])
                 curr_patch_metadata, patch_name = save_patch(patch, patch_num, curr_image_id, args.scale_factor,
                                                              patches_indices_list[level_ind][patch_ind].tolist(),
                                                              level_ind, args.dataset_type,
@@ -285,7 +288,7 @@ def main():
     parser.add_argument("-sf", "--scale_factor", default=0.7, help="Scale factor between pyramid levels")
     parser.add_argument("-po", "--patch_stride", default=0.1, help="Stride between patches in %")
     parser.add_argument("-ps", "--patch_size", default=50, help="The patch size")
-    parser.add_argument("-dt", "--dataset_type", default="debug_val", help="The dataset type (train or test)")
+    parser.add_argument("-dt", "--dataset_type", default="subval", help="The dataset type (train or test)")
     args = parser.parse_args()
     create_image_pyramid_patches_dataset(args)
 

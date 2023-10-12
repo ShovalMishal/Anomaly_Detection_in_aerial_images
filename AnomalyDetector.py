@@ -33,29 +33,29 @@ class AnomalyDetector:
     """Abstract class of anomaly detector. It receives output dir path, dataset configuration and embedder configuration"""
 
     def __init__(self, output_dir, dataset_cfg, embedder_cfg):
-        os.makedirs(os.path.join(self.output_dir, "train/anomaly_detection_result"), exist_ok=True)
         self.output_dir = output_dir
+        os.makedirs(os.path.join(self.output_dir, "train/anomaly_detection_result"), exist_ok=True)
         self.dataset_cfg = dataset_cfg
         self.embedder = {'resnet': ResnetEmbedder}[embedder_cfg.type]
         self.embedder = self.embedder(embedder_cfg.embedder_dim)
         # create train, test and validation datasets
         self.subtest_data_loader = create_patches_dataloader(type="subtest", dataset_cfg=dataset_cfg,
+                                                             batch_size=embedder_cfg.batch_size,
                                                              transform=self.embedder.transform,
                                                              output_dir=output_dir)
         self.subtrain_data_loader = create_patches_dataloader(type="subtrain", dataset_cfg=dataset_cfg,
+                                                              batch_size=embedder_cfg.batch_size,
                                                               transform=self.embedder.transform,
                                                               output_dir=output_dir)
         self.subval_dataloader = create_patches_dataloader(type="subval", dataset_cfg=dataset_cfg,
+                                                           batch_size=embedder_cfg.batch_size,
                                                            transform=self.embedder.transform,
                                                            output_dir=output_dir)
         self.dataloaders = {"train": self.subtrain_data_loader,
                             "test": self.subtest_data_loader,
                             "val": self.subval_dataloader}
 
-    def train(self):
-        pass
-
-    def test(self):
+    def run(self):
         pass
 
 
@@ -97,7 +97,8 @@ def get_outliers(scores, labels, dataset, output_dir, k, outliers_num=10, datase
     if fg_scores.size(0) > 0:
         min_k_fg_scores, min_indices_fg_scores = torch.topk(fg_scores, k=outliers_num, largest=False)
         min_k_fg_scores_indices_in_dataset = torch.where(min_k_fg_scores.unsqueeze(1) == scores.unsqueeze(0))[1]
-        min_k_fg_scores_indices_in_dataset = torch.from_numpy(np.intersect1d(min_k_fg_scores_indices_in_dataset, torch.nonzero(labels > 0)))
+        min_k_fg_scores_indices_in_dataset = torch.from_numpy(
+            np.intersect1d(min_k_fg_scores_indices_in_dataset, torch.nonzero(labels > 0)))
     # save all outliers
     path = os.path.join(output_dir, f"train/anomaly_detection_result/{dataset_name}_outliers_k{str(k)}")
     os.makedirs(path, exist_ok=True)
@@ -106,7 +107,7 @@ def get_outliers(scores, labels, dataset, output_dir, k, outliers_num=10, datase
 
 
 def save_outliers(indices, dataset, path, is_bg):
-    classes = dataset.classes
+    classes = dataset.labels_to_classe_names
     for i in range(indices.size(0)):
         sample = dataset[indices[i]]
         label = sample["labels"]
@@ -130,7 +131,7 @@ class KNNAnomalyDetector(AnomalyDetector):
                                                    'test/anomaly_detection_result/test_scores_table.pt')
         self.val_scores_table_path = os.path.join(self.output_dir, 'train/anomaly_detection_result/val_scores_table.pt')
 
-    def train(self):
+    def run(self):
         torch.cuda.empty_cache()
         print("Starting training pipeline...")
         # create dictionary
@@ -144,23 +145,14 @@ class KNNAnomalyDetector(AnomalyDetector):
                                 path=self.val_scores_table_path)
         chosen_k, threshold = self.find_best_k_and_threshold(path=self.val_scores_table_path)
         # save abnormal and fg samples according to chosen k and threshold
-        test_scores, test_labels = self.save_all_inclusion_files(k=chosen_k, threshold=threshold, dictionary=data["features"])
-        plot_graphs(scores=test_scores, labels=test_labels, chosen_k=chosen_k, output_dir=self.output_dir,
-                    dataset_name="subtest")
+        test_scores, test_labels = self.save_all_inclusion_files(k=chosen_k, threshold=threshold,
+                                                                 dictionary=data["features"])
 
-    # def test(self):
-    #     print("Start testing...")
-    #     # Create test dataset
-    #     dataset_path = os.path.join(self.dataset_cfg["path"], "subval", "images")
-    #     remove_empty_folders(dataset_path)
-    #     patches_dataset = ImagePyramidPatchesDataset(dataset_path, transform=resnet_transform)
-    #     background_label_index = patches_dataset.classes.index("background")
-    #     data_loader = DataLoader(patches_dataset, batch_size=self.dataset_cfg["batch_size"],
-    #                              shuffle=self.dataset_cfg["shuffle"], num_workers=self.dataset_cfg["num_workers"])
-    #     data = torch.load(self.dictionary_path)
-    #     scores, labels = self.calculate_scores_and_labels_without_score_table(data['features'], data_loader,
-    #                                                                           background_label_index)
-    #     plot_graphs(scores, labels, 3, self.output_dir)
+        auc, ap = plot_graphs(scores=test_scores, labels=test_labels,
+                              path=os.path.join(self.output_dir, "train/anomaly_detection_result"),
+                              abnormal_labels=list(range(1, len(self.dataloaders["test"].dataset.classes))),
+                              title=f"k = {chosen_k}", dataset_name="subtest")
+        print(f"The auc for k {chosen_k} is {auc} and the ap is {ap}\n")
 
     def create_dictionary(self, data_loader):
         # save dictionary using the loaded embedder
@@ -176,8 +168,14 @@ class KNNAnomalyDetector(AnomalyDetector):
                              :sample_per_batch]
             sampled_features = torch.index_select(images_patches_features, 0, random_indices)
             sampled_labels = torch.index_select(patches_labels, 0, random_indices)
-            features[idx * sample_per_batch:sample_per_batch * (idx + 1), :] = sampled_features.cpu().detach()
-            labels.append(sampled_labels)
+            if idx == len(data_loader) - 1:
+                features[idx * sample_per_batch:idx * sample_per_batch + sampled_features.size(0),
+                :] = sampled_features.cpu().detach()
+                last_batch_size = sampled_features.size(0)
+            else:
+                features[idx * sample_per_batch:sample_per_batch * (idx + 1), :] = sampled_features.cpu().detach()
+                labels.append(sampled_labels)
+        features = features[:-(data_loader.batch_size - last_batch_size), :]
         labels = torch.cat(labels, dim=0)
         # background should be labeled as 0
         data = {'features': features, 'labels': labels}
@@ -221,7 +219,9 @@ class KNNAnomalyDetector(AnomalyDetector):
         for k_value in self.k_list:
             scores = calculate_scores_accord_k_value(scores_table, k_value)
             print(f"Calculating AuC for k={k_value}...")
-            threshold, chosen_fpr, chosen_tpr = analyze_roc_curve(labels, scores, desired_tpr=0.95)
+            threshold, chosen_fpr, chosen_tpr = analyze_roc_curve(labels=labels,
+                                                                  abnormal_labels=list(range(1, len(self.dataloaders["val"].dataset.classes))),
+                                                                  scores=scores, desired_tpr=0.95)
             print(f"k = {k_value}: for tpr {chosen_tpr}, the fpr is {chosen_fpr} and the threshold is {threshold}\n")
             if chosen_fpr < lowest_fpr_cal:
                 best_scores = scores
@@ -236,8 +236,9 @@ class KNNAnomalyDetector(AnomalyDetector):
 
     def create_dataset_inclusion_file(self, k, threshold, dataloader, dictionary, dataset_type,
                                       save_scores=True):
+        torch.cuda.empty_cache()
         print(f"Calculate inclusion file, scores and labels for {dataset_type} dataset...")
-        if not os.path.exists(dataloader.dataset.scores_and_labels_file):
+        if not os.path.exists(dataloader.dataset.scores_and_labels_file_ad):
             scores = []
             labels = []
             paths = []
@@ -253,18 +254,27 @@ class KNNAnomalyDetector(AnomalyDetector):
             scores = torch.concat(scores, dim=0)
             labels = torch.concat(labels, dim=0)
         else:
-            with open(dataloader.dataset.scores_and_labels_file, 'r') as file:
+            with open(dataloader.dataset.scores_and_labels_file_ad, 'r') as file:
                 data = json.load(file)
-                scores = data['scores']
-                labels = data['labels']
+                scores = torch.tensor(data['scores'])
+                labels = torch.tensor(data['labels'])
+                paths = data['paths']
                 assert int(data['k']) == k, "loaded scores and labels is incorrect!"
 
         abnormal_indices_accord_thresh = np.where((scores.numpy() >= threshold).astype(int) == 1)[0]
+        ood_labels = list(dataloader.dataset.ood_classes.values())
         if "train" in dataset_type:
             # inject only in distribution foreground patches for train dataset!
-            ood_labels = list(dataloader.dataset.ood_classes.values())
-            fg_id_indices = torch.nonzero((labels > 0) & (torch.tensor([x not in ood_labels for x in labels]))).squeeze().numpy()
+            fg_id_indices = torch.nonzero(
+                (labels > 0) & (torch.tensor([x not in ood_labels for x in labels]))).squeeze().numpy()
+            abnormal_indices_accord_thresh = torch.nonzero((labels == 0) & (scores >= threshold)).squeeze()
+            random.seed(36)
+            abnormal_indices_accord_thresh = torch.tensor(random.sample(abnormal_indices_accord_thresh.tolist(), int(0.1*abnormal_indices_accord_thresh.size(0))))
             abnormal_indices_accord_thresh = np.unique(np.concatenate((abnormal_indices_accord_thresh, fg_id_indices)))
+        elif "val" in dataset_type:
+            abnormal_indices_accord_thresh = torch.nonzero(
+                (scores >= threshold) & (torch.tensor([x not in ood_labels for x in labels]))).squeeze().numpy()
+
         relevant_paths_for_training = [paths[i] for i in abnormal_indices_accord_thresh]
 
         # save inclusion text file
@@ -273,50 +283,16 @@ class KNNAnomalyDetector(AnomalyDetector):
                 file.write(string + "\n")
 
         # save score and labels for train dataset
-        if save_scores and not os.path.exists(dataloader.dataset.scores_and_labels_file):
-            with open(dataloader.dataset.scores_and_labels_file, 'w') as f:
+        if save_scores and not os.path.exists(dataloader.dataset.scores_and_labels_file_ad):
+            with open(dataloader.dataset.scores_and_labels_file_ad, 'w') as f:
                 k_dict = {}
                 k_dict["k"] = str(k)
                 k_dict["scores"] = scores.tolist()
                 k_dict["labels"] = labels.tolist()
+                k_dict["paths"] = paths
                 json.dump(k_dict, f, indent=4)
         if "test" in dataset_type:
             return scores, labels
-
-    # def calculate_scores_and_labels_without_score_table(self, dictionary, dataloader, background_label_index,
-    #                                                     save_results=True, k=3):
-    #     scores = []
-    #     labels = []
-    #     dictionary = dictionary.to(device)
-    #     for idx, data_batch in tqdm(enumerate(dataloader)):
-    #         # start_time = time.time()
-    #         images_patches_features = self.embedder.calculate_batch_features(data_batch["pixel_values"])
-    #         # end_time = time.time()
-    #         # print("Extracting features time: ", end_time - start_time)
-    #         patches_labels = data_batch["labels"]
-    #         # start_time = time.time()
-    #         batch_scores = calculate_scores(images_patches_features, dictionary, k=k).cpu()
-    #         # end_time = time.time()
-    #         # print("Calculate score time: ", end_time - start_time)
-    #         batch_labels = patches_labels.cpu()
-    #         scores.append(batch_scores)
-    #         labels.append(batch_labels)
-    #
-    #     scores = torch.concat(scores, dim=0)
-    #     labels = torch.concat(labels, dim=0)
-    #     get_outliers(scores=scores, labels=labels, dataset=dataloader.dataset, output_dir=self.output_dir, k=k,
-    #                  outliers_num=20)
-    #
-    #     # save score and labels per k
-    #     if save_results:
-    #         with open(os.path.join(self.output_dir,
-    #                                f'statistics/test/anomaly_detection_result/k_{str(k)}_scores_and_labels.json'),
-    #                   'w') as f:
-    #             k_dict = {}
-    #             k_dict["scores"] = scores.tolist()
-    #             k_dict["labels"] = labels.tolist()
-    #             json.dump(k_dict, f, indent=4)
-    #     return scores, labels
 
     def save_all_inclusion_files(self, k, threshold, dictionary):
         test_scores = []
