@@ -8,10 +8,10 @@ from sklearn.metrics import RocCurveDisplay, PrecisionRecallDisplay, average_pre
 import plotly.graph_objects as go
 
 
-def plot_graphs(scores, labels, path, abnormal_labels, title="", dataset_name="train", ood_mode=False):
+def plot_graphs(scores, labels, path, abnormal_labels, title="", dataset_name="train", ood_mode=False, labels_to_classes_names={}):
     os.makedirs(path, exist_ok=True)
     plot_scores_histograms(scores=scores, labels=labels, abnormal_labels=abnormal_labels, title=title, path=path,
-                           dataset_name=dataset_name)
+                           dataset_name=dataset_name, labels_to_classes_names=labels_to_classes_names, per_label=True)
     ap = plot_precision_recall_curve(labels=labels, scores=scores, abnormal_labels=abnormal_labels, title=title,
                                      path=path, dataset_name=dataset_name, ood_mode=ood_mode)
     auc = plot_roc_curve(labels=labels, scores=scores, abnormal_labels=abnormal_labels, title=title, path=path,
@@ -19,7 +19,8 @@ def plot_graphs(scores, labels, path, abnormal_labels, title="", dataset_name="t
     return auc, ap
 
 
-def plot_precision_recall_curve(labels, scores, abnormal_labels, title="", path: str = "", dataset_name="train", ood_mode=False):
+def plot_precision_recall_curve(labels, scores, abnormal_labels, title="", path: str = "", dataset_name="train",
+                                ood_mode=False):
     # all abnormal labels are changed to 1
     mask = labels.unsqueeze(1).eq(torch.tensor(abnormal_labels).unsqueeze(0))
     new_labels = torch.any(mask, dim=1).to(torch.int)
@@ -42,6 +43,8 @@ def plot_precision_recall_curve(labels, scores, abnormal_labels, title="", path:
     if path:
         if "k" in title:
             plt.savefig(path + f"/{dataset_name}_dataset_k" + str(title[-1]) + "_precision_recall.png")
+        else:
+            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_precision_recall.png")
     plt.show()
     return ap
 
@@ -93,24 +96,67 @@ def plot_roc_curve(labels, scores, abnormal_labels, title="", path: str = "", da
     if path:
         if "k" in title:
             plt.savefig(path + f"/{dataset_name}_dataset_k" + str(title[-1]) + "_ROC.png")
+        else:
+            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_ROC.png")
     plt.show()
     return auc
 
 
-def plot_scores_histograms(scores, labels, abnormal_labels, title="", path="", dataset_name="train"):
+def plot_scores_histograms(scores, labels, abnormal_labels, title="", path="", dataset_name="train", per_label=False,
+                           labels_to_classes_names={}):
     scores = scores.tolist()
     labels = labels.tolist()
-    abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label in abnormal_labels]
-    normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label not in abnormal_labels]
-    histogram1 = go.Histogram(x=normal_scores, name='normal_scores', marker=dict(color='blue'))
-    histogram2 = go.Histogram(x=abnormal_scores, name='abnormal_scores', marker=dict(color='red'))
-    fig = go.Figure(data=[histogram1, histogram2])
-    fig.update_layout(
-        title=f'Histogram of fg and bg scores {title}',
-        xaxis_title='scores',
-        yaxis_title='Count'
-    )
+    if not per_label:
+        abnormal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label in abnormal_labels]
+        normal_scores = [scores[ind] for (ind, label) in enumerate(labels) if label not in abnormal_labels]
+        histogram1 = go.Histogram(x=normal_scores, name='normal_scores', marker=dict(color='blue'))
+        histogram2 = go.Histogram(x=abnormal_scores, name='abnormal_scores', marker=dict(color='red'))
+        fig = go.Figure(data=[histogram1, histogram2])
+        fig.update_layout(
+            title=f'Histogram of normal and abnormal scores {title}',
+            xaxis_title='scores',
+            yaxis_title='Count'
+        )
+    else:
+        all_hists = []
+        labels_set = set(labels)
+        for curr_label in labels_set:
+            curr_labels_scores = [scores[ind] for (ind, label) in enumerate(labels) if label==curr_label]
+            curr_labels_hist = go.Histogram(x=curr_labels_scores, name=f'{labels_to_classes_names[curr_label]}')
+            all_hists.append(curr_labels_hist)
+        fig = go.Figure(data=all_hists)
+        fig.update_layout(
+            title=f'Histogram of all labels scores {title}',
+            xaxis_title='scores',
+            yaxis_title='Count'
+        )
     if path:
         if "k" in title:
             fig.write_html(path + f"/{dataset_name}_dataset_k{str(title[-1])}_normality_scores_hist.html")
+        else:
+            fig.write_html(path + f"/{dataset_name}_dataset_{str(title)}_normality_scores_hist.html")
     fig.show()
+
+
+def plot_confusion_matrix(confusion_matrix, classes, normalize=True, output_dir="./"):
+    correct = 0
+    for i in range(len(confusion_matrix)):
+        correct += confusion_matrix[i, i]
+    correct / confusion_matrix.sum()
+    acc = correct / confusion_matrix.sum() * 100
+    confusion_matrix = confusion_matrix.astype(float)
+    if normalize:
+        for idx in range(len(confusion_matrix)):
+            confusion_matrix[idx, ...] = confusion_matrix[idx, ...] / confusion_matrix[idx, ...].sum()
+    title = " normalized " if normalize else " "
+    file_name = "normalized_" if normalize else ""
+    plt.imshow(confusion_matrix)
+    plt.colorbar()
+    plt.xticks(range(len(classes)), classes, rotation=90)
+    plt.yticks(range(len(classes)), classes)
+    plt.title(
+        f'confusion matrix{title}according to rows\naccuracy: {acc:.2f}[%]')
+    plt.tight_layout()
+    plt.show()
+    plt.savefig(os.path.join(output_dir, f"{file_name}training_confusion_matrix.png"))
+

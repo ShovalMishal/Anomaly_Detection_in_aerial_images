@@ -10,7 +10,7 @@ from AnomalyDetector import KNNAnomalyDetector
 from Classifier import VitClassifier
 from OODDetector import ODINOODDetector
 from results import plot_graphs
-from utils import create_patches_dataloader, calculate_confusion_matrix, create_and_save_confusion_matrix
+from utils import create_patches_dataloader, calculate_confusion_matrix, create_and_save_confusion_matrix, create_logger
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -19,6 +19,7 @@ class FullODDPipeline:
     def __init__(self, args):
         self.output_dir = args.output_dir
         os.makedirs(os.path.join(self.output_dir), exist_ok=True)
+        self.logger = create_logger(os.path.join(self.output_dir, "full_ood_pipeline_log.log"))
         self.cfg = Config.fromfile(args.config)
         self.dataset_cfg = self.cfg.get("patches_dataset")
         anomaly_detector_cfg = self.cfg.get("anomaly_detector_cfg")
@@ -28,12 +29,11 @@ class FullODDPipeline:
         self.OOD_detector_cfg = self.cfg.get("OOD_detector_cfg")
         self.anomaly_detector = {'knn': KNNAnomalyDetector}[anomaly_detector_cfg.type]
         self.anomaly_detector = self.anomaly_detector(embedder_cfg, anomaly_detector_cfg, self.dataset_cfg,
-                                                      self.output_dir)
+                                                      self.output_dir, self.logger)
         self.classifier = {'vit': VitClassifier}[self.classifier_cfg.type]
-        self.classifier = self.classifier(self.output_dir, self.classifier_cfg)
+        self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger)
         self.OOD_detector = {'ODIN': ODINOODDetector}[self.OOD_detector_cfg.type]
         self.OOD_detector = self.OOD_detector(output_dir=self.output_dir)
-        logging.basicConfig(filename=os.path.join(self.output_dir, "log.txt"), level=logging.INFO, format='%(asctime)s - %(message)s')
 
     def train(self):
         os.makedirs(os.path.join(self.output_dir, "train"), exist_ok=True)
@@ -50,6 +50,7 @@ class FullODDPipeline:
                                                        batch_size=self.classifier_cfg.per_device_eval_batch_size,
                                                        transform=self.classifier.vit_transform,
                                                        output_dir=self.output_dir,
+                                                       logger=self.logger,
                                                        is_valid_file_use=True,
                                                        collate_fn=self.classifier.collate_fn)
         model = self.classifier.get_fine_tuned_model().to(device)
@@ -59,7 +60,8 @@ class FullODDPipeline:
                                        shuffle=self.dataset_cfg.shuffle, num_workers=self.dataset_cfg["num_workers"],
                                        collate_fn=self.classifier.collate_fn)
         # get confusion matrix for each label
-        calculate_confusion_matrix(subval_dataloader, model, "subval", os.path.join(self.output_dir, "test"))
+        calculate_confusion_matrix(dataloader=subval_dataloader, model=model, dataset_name="subval",
+                                   path=self.classifier.test_output_dir, logger=self.logger)
         self.OOD_detector.model = model
         if not os.path.exists(subtest_dataloader.dataset.scores_and_labels_file_ood):
             scores, labels, preds = self.OOD_detector.score_samples(dataloader=subtest_dataloader)
@@ -72,8 +74,8 @@ class FullODDPipeline:
                 scores = torch.tensor(data['scores'])
                 labels = torch.tensor(data['labels'])
                 preds = torch.tensor(data['preds'])
-        create_and_save_confusion_matrix(all_labels=labels, all_preds=preds, dataset_name="subtest",
-                                         path=os.path.join(self.output_dir, "test"))
+        create_and_save_confusion_matrix(all_labels=labels, all_preds=preds, path=self.classifier.test_output_dir,
+                                         dataset_name="subtest", logger=self.logger)
         plot_graphs(scores=scores, labels=labels, path=os.path.join(self.output_dir, "test/OOD"), title="OOD stage",
                     abnormal_labels=list(subtest_dataloader.dataset.ood_classes.values()), dataset_name="test",
                     ood_mode=True)

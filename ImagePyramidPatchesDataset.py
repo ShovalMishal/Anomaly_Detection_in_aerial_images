@@ -14,10 +14,11 @@ def transform_to_imshow(image):
 
 
 class ImagePyramidPatchesDataset(ImageFolder):
-    def __init__(self, root_dir, inclusion_file_path, dataset_type, output_dir, transform=None, is_valid_file=None,
+    def __init__(self, root_dir, inclusion_file_path, dataset_type, output_dir, logger, transform=None, is_valid_file=None,
                  ood_classes_names=[]):
         super(ImagePyramidPatchesDataset, self).__init__(root=root_dir, transform=transform,
                                                          is_valid_file=is_valid_file)
+        self.logger = logger
         background_ind = self.classes.index("background")
         ood_indices =sorted([self.classes.index(ood_class_name) for ood_class_name in ood_classes_names if
                        ood_class_name in self.classes])
@@ -32,7 +33,7 @@ class ImagePyramidPatchesDataset(ImageFolder):
                                           list(self.custom_label_mapping.keys())[list(self.custom_label_mapping.values()).index(0)]: self.custom_label_mapping[background_ind]})
         self.labels_to_classe_names = {self.custom_label_mapping[i]: self.classes[i] for i in range(len(self.classes))}
         self.classes_names_to_labels = {self.classes[i]: self.custom_label_mapping[i] for i in range(len(self.classes))}
-        print(f"final mapping for {dataset_type} dataset is {self.custom_label_mapping}\n")
+        self.logger.info(f"final mapping for {dataset_type} dataset is {self.custom_label_mapping}\n")
         self.ood_classes = {name: self.classes_names_to_labels[name] for name in ood_classes_names if name in
                             self.classes_names_to_labels}
         self.root_dir = root_dir
@@ -43,14 +44,19 @@ class ImagePyramidPatchesDataset(ImageFolder):
         self.scores_and_labels_file_ood = os.path.join(output_dir,
                                                        f'test/OOD/{dataset_type}_dataset_scores_and_labels.json')
         # Print number of samples from each class and calculate class weights
-        self.class_weight = {}
-        print(f"************** print dataset {dataset_type} class counts ****************\n")
+        self.weights = {}
+        self.logger.info(f"************** print dataset {dataset_type} class counts ****************\n")
         class_counts = Counter(self.targets)
+        weights_sum = 0
         for class_label, count in class_counts.items():
-            class_name = self.labels_to_classe_names[class_label]
-            self.class_weight[class_label] = 1/count
-            print(f"Class {class_name}: {count} samples")
-        print("**********************************************************************\n")
+            class_name = self.labels_to_classe_names[self.custom_label_mapping[class_label]]
+            self.weights[class_label] = 1 / count
+            weights_sum+=1/count
+            self.logger.info(f"Class {class_name}: {count} samples")
+        self.weights = {class_label: self.weights[class_label] / weights_sum for class_label, _ in class_counts.items()}
+        self.logger.info("weights are:")
+        self.logger.info(self.weights)
+        self.logger.info("**********************************************************************\n")
 
     def __getitem__(self, index):
         original_tuple = super(ImagePyramidPatchesDataset, self).__getitem__(index)

@@ -4,7 +4,7 @@ import os
 
 from sklearn.metrics import confusion_matrix
 from OODDetector import ODINOODDetector
-from OOD_Upper_Bound.our_google_finetuner import create_dataloaders, train_classifier, DatasetType
+from OOD_Upper_Bound.finetune_vit_classifier import create_dataloaders, train_classifier, DatasetType
 from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
 from results import plot_confusion_matrix, plot_graphs
 from utils import eval_model

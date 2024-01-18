@@ -48,7 +48,7 @@ class ODINOODDetector(OODDetector):
         inputs = inputs.cuda()
         inputs.retain_grad()
 
-        outputs = self.model(inputs)["logits"]
+        outputs = self.model(inputs)
 
         maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
 
@@ -65,7 +65,7 @@ class ODINOODDetector(OODDetector):
 
         # Adding small perturbations to images
         tempInputs = torch.add(inputs.data, -self.epsilon, gradient)
-        outputs = self.model(Variable(tempInputs))["logits"]
+        outputs = self.model(Variable(tempInputs))
         outputs = outputs / self.temperature
         # Calculating the confidence after adding perturbations
         nnOutputs = outputs.data.cpu()

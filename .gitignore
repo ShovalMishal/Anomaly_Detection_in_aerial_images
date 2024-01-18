@@ -3,5 +3,7 @@ __pycache__
 data/**
 out/**
 oriented_rcnn_r50_fpn_1x_dota_le90-6d2b2ce0.pth
+OOD_Upper_Bound/lightning_logs/
+OOD_Upper_Bound/upper_bound_output/
 
 

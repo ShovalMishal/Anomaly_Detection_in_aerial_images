@@ -1,21 +1,78 @@
 import os
+from typing import Union, Optional, Dict, Callable, List, Tuple
+
 import torch
+
 from plotly.figure_factory import np
+from torch import nn
+from torch.utils.data import WeightedRandomSampler
 
 from utils import create_patches_dataset
-from datasets import load_metric
-from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments, Trainer
+from datasets import load_metric, Dataset
+from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments, Trainer, PreTrainedModel, \
+    DataCollator, PreTrainedTokenizerBase, EvalPrediction, TrainerCallback
+from CustomSampler import CustomSampler
 
 
 class Classifier():
-    def __init__(self, output_dir, classifier_cfg):
-        self.classfier_output_dir = os.path.join(output_dir, classifier_cfg.output_dir)
+    def __init__(self, output_dir, classifier_cfg, logger):
+        self.classifier_cfg = classifier_cfg
+        self.classfier_train_output_dir = os.path.join(output_dir, classifier_cfg.train_output_dir)
+        self.test_output_dir = os.path.join(output_dir, classifier_cfg.test_output_dir)
+        os.makedirs(self.test_output_dir, exist_ok=True)
+        self.logger = logger
 
     def train(self):
         pass
 
     def test(self):
         pass
+
+
+class CustomTrainer(Trainer):
+    def __init__(
+            self,
+            sampler_type: str,
+            sampler_cfg: Dict,
+            model: Union[PreTrainedModel, nn.Module] = None,
+            args: TrainingArguments = None,
+            data_collator: Optional[DataCollator] = None,
+            train_dataset: Optional[Dataset] = None,
+            eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
+            tokenizer: Optional[PreTrainedTokenizerBase] = None,
+            model_init: Optional[Callable[[], PreTrainedModel]] = None,
+            compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
+            callbacks: Optional[List[TrainerCallback]] = None,
+            optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
+            preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+
+    ):
+        super().__init__(model=model, args=args,
+                         data_collator=data_collator,
+                         train_dataset=train_dataset,
+                         eval_dataset=eval_dataset,
+                         tokenizer=tokenizer,
+                         model_init=model_init,
+                         compute_metrics=compute_metrics,
+                         callbacks=callbacks,
+                         optimizers=optimizers,
+                         preprocess_logits_for_metrics=preprocess_logits_for_metrics)
+        self.sampler = {"CustomSampler": CustomSampler, "WeightedRandomSampler": WeightedRandomSampler}[sampler_type]
+        self.sampler_type = sampler_type
+        self.sampler_cfg = sampler_cfg
+
+    def _get_train_sampler(self) -> torch.utils.data.Sampler:
+        # Create a stratified sampler
+        labels = [sample["labels"] for sample in self.train_dataset]
+        sampler = None
+        if self.sampler_type == "CustomSampler":
+            sampler = self.sampler(labels=labels, num_samples=len(self.train_dataset), batch_size=16,
+                                   labels_frequency_inbatch=self.sampler_cfg.custom_sampler_labels_frequency,
+                                   shuffle=True)
+        elif self.sampler_type == "WeightedRandomSampler":
+            sampler = self.sampler(weights=list(self.train_dataset.weights.values()), num_samples=len(self.train_dataset))
+        # Return the stratified sampler
+        return sampler
 
 
 # class Tokenizer(PreTrainedTokenizerBase)
@@ -34,8 +91,8 @@ def compute_metrics(p):
 
 
 class VitClassifier(Classifier):
-    def __init__(self, output_dir, classifier_cfg):
-        super().__init__(output_dir, classifier_cfg)
+    def __init__(self, output_dir, classifier_cfg, logger):
+        super().__init__(output_dir, classifier_cfg, logger)
         self.feature_extractor = ViTImageProcessor.from_pretrained(classifier_cfg["model_path"])
         self.vit_transform = create_transform_func(self.feature_extractor)
 
@@ -49,10 +106,12 @@ class VitClassifier(Classifier):
         self.in_distribution_train_dataset = create_patches_dataset(type="subtrain", dataset_cfg=dataset_cfg,
                                                                     transform=self.vit_transform,
                                                                     output_dir=output_dir,
+                                                                    logger=self.logger,
                                                                     is_valid_file_use=True,
                                                                     ood_remove=True)
         self.in_distribution_val_dataset = create_patches_dataset(type="subval", dataset_cfg=dataset_cfg,
                                                                   transform=self.vit_transform, output_dir=output_dir,
+                                                                  logger=self.logger,
                                                                   is_valid_file_use=True,
                                                                   ood_remove=True)
         labels_to_classe_names = self.in_distribution_train_dataset.labels_to_classe_names
@@ -64,7 +123,7 @@ class VitClassifier(Classifier):
             label2id=classes_names_to_labels
         )
         training_args = TrainingArguments(
-            output_dir=self.classfier_output_dir,
+            output_dir=self.classfier_train_output_dir,
             per_device_train_batch_size=classifier_cfg.per_device_train_batch_size,
             per_device_eval_batch_size=classifier_cfg.per_device_eval_batch_size,
             evaluation_strategy=classifier_cfg.evaluation_strategy,
@@ -80,22 +139,32 @@ class VitClassifier(Classifier):
             report_to=classifier_cfg.report_to,
             load_best_model_at_end=classifier_cfg.load_best_model_at_end,
         )
-
-        self.trainer = Trainer(
-            model=model,
-            args=training_args,
-            data_collator=self.collate_fn,
-            compute_metrics=compute_metrics,
-            train_dataset=self.in_distribution_train_dataset,
-            eval_dataset=self.in_distribution_val_dataset,
-            tokenizer=self.feature_extractor,
-        )
+        if self.classifier_cfg.sampler_type == "random":
+            self.trainer = Trainer(model=model,
+                                   args=training_args,
+                                   data_collator=self.collate_fn,
+                                   compute_metrics=compute_metrics,
+                                   train_dataset=self.in_distribution_train_dataset,
+                                   eval_dataset=self.in_distribution_val_dataset,
+                                   tokenizer=self.feature_extractor, )
+        else:
+            self.trainer = CustomTrainer(
+                sampler_type=self.classifier_cfg.sampler_type,
+                sampler_cfg=self.classifier_cfg.sampler_cfg,
+                model=model,
+                args=training_args,
+                data_collator=self.collate_fn,
+                compute_metrics=compute_metrics,
+                train_dataset=self.in_distribution_train_dataset,
+                eval_dataset=self.in_distribution_val_dataset,
+                tokenizer=self.feature_extractor,
+            )
 
     def train(self):
         train_results = self.trainer.train()
         self.trainer.save_model()
-        self.trainer.log_metrics("subtrain", train_results.metrics)
-        self.trainer.save_metrics("subtrain", train_results.metrics)
+        self.trainer.log_metrics("train", train_results.metrics)
+        self.trainer.save_metrics("train", train_results.metrics)
         self.trainer.save_state()
         # evaluate
         metrics = self.trainer.evaluate(self.in_distribution_val_dataset)
@@ -103,5 +172,5 @@ class VitClassifier(Classifier):
         self.trainer.save_metrics("eval", metrics)
 
     def get_fine_tuned_model(self):
-        model = ViTForImageClassification.from_pretrained(self.classfier_output_dir)
+        model = ViTForImageClassification.from_pretrained(self.classfier_train_output_dir)
         return model
