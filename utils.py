@@ -9,7 +9,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix
 from ImagePyramidPatchesDataset import ImagePyramidPatchesDataset
-
+from mmengine.runner import Runner
+import copy
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def create_logger(path):
@@ -72,14 +73,12 @@ def is_valid_file_wrapper(path_to_exclusion_file):
 
     return is_valid_file
 
-
-def create_patches_dataloader(type, dataset_cfg, batch_size, transform, output_dir, logger,
-                              is_valid_file_use=False, collate_fn=None):
-    patches_dataset = create_patches_dataset(type=type, dataset_cfg=dataset_cfg, transform=transform,
-                                             output_dir=output_dir, is_valid_file_use=is_valid_file_use, logger=logger)
-    data_loader = DataLoader(dataset=patches_dataset, batch_size=batch_size, shuffle=dataset_cfg["shuffle"],
-                             num_workers=dataset_cfg["num_workers"], collate_fn=collate_fn)
+def create_dataloader(dataloader_cfg):
+    dataloader_cfg = copy.deepcopy(dataloader_cfg)
+    dataloader_cfg["dataset"]["_scope_"] = "mmrotate"
+    data_loader = Runner.build_dataloader(dataloader_cfg, seed=123456)
     return data_loader
+
 
 
 def create_patches_dataset(type, dataset_cfg, transform, output_dir, logger, is_valid_file_use=False, ood_remove=False):

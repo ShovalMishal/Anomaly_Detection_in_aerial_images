@@ -1,0 +1,6 @@
+[submodule "single-image-bg-detector"]
+	path = single-image-bg-detector
+	url = https://github.com/ShovalMishal/single-image-bg-detector.git
+[submodule "DOTA_devkit"]
+	path = DOTA_devkit
+	url = https://github.com/ShovalMishal/DOTA_devkit.git

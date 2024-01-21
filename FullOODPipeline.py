@@ -6,7 +6,7 @@ import torch
 from mmengine.config import Config
 from torch.utils.data import DataLoader
 
-from AnomalyDetector import KNNAnomalyDetector
+from AnomalyDetector import KNNAnomalyDetector, VitBasedAnomalyDetector
 from Classifier import VitClassifier
 from OODDetector import ODINOODDetector
 from results import plot_graphs
@@ -15,20 +15,18 @@ from utils import create_patches_dataloader, calculate_confusion_matrix, create_
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+
 class FullODDPipeline:
     def __init__(self, args):
-        self.output_dir = args.output_dir
+        self.cfg = Config.fromfile(args.config)
+        self.output_dir = self.cfg.output_dir
         os.makedirs(os.path.join(self.output_dir), exist_ok=True)
         self.logger = create_logger(os.path.join(self.output_dir, "full_ood_pipeline_log.log"))
-        self.cfg = Config.fromfile(args.config)
-        self.dataset_cfg = self.cfg.get("patches_dataset")
         anomaly_detector_cfg = self.cfg.get("anomaly_detector_cfg")
-        embedder_cfg = self.cfg.get("embedder_cfg")
-        self.dataset_cfg = self.cfg.get("patches_dataset")
         self.classifier_cfg = self.cfg.get("classifier_cfg")
         self.OOD_detector_cfg = self.cfg.get("OOD_detector_cfg")
-        self.anomaly_detector = {'knn': KNNAnomalyDetector}[anomaly_detector_cfg.type]
-        self.anomaly_detector = self.anomaly_detector(embedder_cfg, anomaly_detector_cfg, self.dataset_cfg,
+        self.anomaly_detector = {'vit_based_anomaly_detector': VitBasedAnomalyDetector}[anomaly_detector_cfg.type]
+        self.anomaly_detector = self.anomaly_detector(anomaly_detector_cfg,
                                                       self.output_dir, self.logger)
         self.classifier = {'vit': VitClassifier}[self.classifier_cfg.type]
         self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger)
@@ -84,7 +82,6 @@ class FullODDPipeline:
 def main():
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", help="The relative path to the cfg file")
-    parser.add_argument("-o", "--output_dir", help="Statistics output dir")
     args = parser.parse_args()
     pipeline = FullODDPipeline(args)
     pipeline.train()
