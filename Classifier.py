@@ -1,23 +1,42 @@
 import os
+from enum import Enum
 from typing import Union, Optional, Dict, Callable, List, Tuple
 
 import torch
-
 from plotly.figure_factory import np
+from sklearn.metrics import confusion_matrix
 from torch import nn
-from torch.utils.data import WeightedRandomSampler
-
-from utils import create_patches_dataset
+from torch.utils.data import WeightedRandomSampler, DataLoader
+from torchvision.transforms import (CenterCrop,
+                                    Compose,
+                                    Normalize,
+                                    RandomHorizontalFlip,
+                                    RandomResizedCrop,
+                                    Resize,
+                                    ToTensor)
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from OOD_Upper_Bound.finetune_vit_classifier import train_classifier, ViTLightningModule
+from OOD_Upper_Bound.ood_and_id_dataset import OODAndIDDataset
+from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
+from results import plot_confusion_matrix
+from utils import create_patches_dataset, eval_model
 from datasets import load_metric, Dataset
 from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments, Trainer, PreTrainedModel, \
     DataCollator, PreTrainedTokenizerBase, EvalPrediction, TrainerCallback
 from CustomSampler import CustomSampler
 
 
+class DatasetType(Enum):
+    IN_DISTRIBUTION = "id"
+    OUT_OF_DISTRIBUTION = "ood"
+    NONE = ""
+
+
 class Classifier():
     def __init__(self, output_dir, classifier_cfg, logger):
         self.classifier_cfg = classifier_cfg
-        self.classfier_train_output_dir = os.path.join(output_dir, classifier_cfg.train_output_dir)
+        self.train_output_dir = os.path.join(output_dir, classifier_cfg.train_output_dir)
         self.test_output_dir = os.path.join(output_dir, classifier_cfg.test_output_dir)
         os.makedirs(self.test_output_dir, exist_ok=True)
         self.logger = logger
@@ -75,102 +94,138 @@ class CustomTrainer(Trainer):
         return sampler
 
 
-# class Tokenizer(PreTrainedTokenizerBase)
-def create_transform_func(feature_extractor):
-    def vit_transform(example_batch):
-        # Take a list of PIL images and turn them into pixel values
-        inputs = feature_extractor(example_batch, return_tensors='pt')
-        return inputs
-
-    return vit_transform
-
 
 def compute_metrics(p):
     metric = load_metric("accuracy")
     return metric.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)
 
+def collate_fn(examples):
+    pixel_values = torch.stack([example[0] for example in examples])
+    labels = torch.tensor([example[1] for example in examples])
+    return {"pixel_values": pixel_values, "labels": labels}
+
+def create_dataloaders(data_paths, dataset_type: DatasetType, ood_classes_names=[]):
+    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
+    image_mean = processor.image_mean
+    image_std = processor.image_std
+    size = processor.size["height"]
+    normalize = Normalize(mean=image_mean, std=image_std)
+    _train_transforms = Compose(
+        [
+            RandomResizedCrop(size),
+            RandomHorizontalFlip(),
+            ToTensor(),
+            normalize,
+        ]
+    )
+
+    _val_transforms = Compose(
+        [
+            Resize(size),
+            CenterCrop(size),
+            ToTensor(),
+            normalize,
+        ]
+    )
+    train_batch_size = 100
+    eval_batch_size = 100
+    train_ds = OODAndIDDataset(root_dir=os.path.join(data_paths["train"], "images") if dataset_type is DatasetType.NONE
+    else os.path.join(data_paths["train"], f"{dataset_type.value}_dataset"),
+                               dataset_type="train",
+                               transform=_train_transforms,
+                               ood_classes_names=ood_classes_names)
+    val_ds = OODAndIDDataset(
+        root_dir=os.path.join(data_paths["val"], "images") if dataset_type is DatasetType.NONE else
+        os.path.join(data_paths["val"], f"{dataset_type.value}_dataset"),
+        dataset_type="val",
+        transform=_val_transforms,
+        ood_classes_names=ood_classes_names)
+    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=collate_fn, batch_size=train_batch_size,
+                                  num_workers=12)
+    val_dataloader = DataLoader(val_ds, collate_fn=collate_fn, batch_size=eval_batch_size, num_workers=12)
+    return train_dataloader, val_dataloader
 
 class VitClassifier(Classifier):
     def __init__(self, output_dir, classifier_cfg, logger):
         super().__init__(output_dir, classifier_cfg, logger)
-        self.feature_extractor = ViTImageProcessor.from_pretrained(classifier_cfg["model_path"])
-        self.vit_transform = create_transform_func(self.feature_extractor)
 
-    @staticmethod
-    def collate_fn(examples):
-        pixel_values = torch.cat([example["pixel_values"] for example in examples])
-        labels = torch.tensor([example["labels"] for example in examples])
-        return {"pixel_values": pixel_values, "labels": labels}
 
-    def initiate_trainer(self, classifier_cfg, dataset_cfg, output_dir):
-        self.in_distribution_train_dataset = create_patches_dataset(type="subtrain", dataset_cfg=dataset_cfg,
-                                                                    transform=self.vit_transform,
-                                                                    output_dir=output_dir,
-                                                                    logger=self.logger,
-                                                                    is_valid_file_use=True,
-                                                                    ood_remove=True)
-        self.in_distribution_val_dataset = create_patches_dataset(type="subval", dataset_cfg=dataset_cfg,
-                                                                  transform=self.vit_transform, output_dir=output_dir,
-                                                                  logger=self.logger,
-                                                                  is_valid_file_use=True,
-                                                                  ood_remove=True)
-        labels_to_classe_names = self.in_distribution_train_dataset.labels_to_classe_names
-        classes_names_to_labels = self.in_distribution_train_dataset.classes_names_to_labels
-        model = ViTForImageClassification.from_pretrained(
-            classifier_cfg.model_path,
-            num_labels=len(labels_to_classe_names),
-            id2label=labels_to_classe_names,
-            label2id=classes_names_to_labels
-        )
-        training_args = TrainingArguments(
-            output_dir=self.classfier_train_output_dir,
-            per_device_train_batch_size=classifier_cfg.per_device_train_batch_size,
-            per_device_eval_batch_size=classifier_cfg.per_device_eval_batch_size,
-            evaluation_strategy=classifier_cfg.evaluation_strategy,
-            num_train_epochs=classifier_cfg.num_train_epochs,
-            fp16=classifier_cfg.fp16,
-            save_steps=classifier_cfg.save_steps,
-            eval_steps=classifier_cfg.eval_steps,
-            logging_steps=classifier_cfg.logging_steps,
-            learning_rate=classifier_cfg.learning_rate,
-            save_total_limit=classifier_cfg.save_total_limit,
-            remove_unused_columns=classifier_cfg.remove_unused_columns,
-            push_to_hub=classifier_cfg.push_to_hub,
-            report_to=classifier_cfg.report_to,
-            load_best_model_at_end=classifier_cfg.load_best_model_at_end,
-        )
-        if self.classifier_cfg.sampler_type == "random":
-            self.trainer = Trainer(model=model,
-                                   args=training_args,
-                                   data_collator=self.collate_fn,
-                                   compute_metrics=compute_metrics,
-                                   train_dataset=self.in_distribution_train_dataset,
-                                   eval_dataset=self.in_distribution_val_dataset,
-                                   tokenizer=self.feature_extractor, )
-        else:
-            self.trainer = CustomTrainer(
-                sampler_type=self.classifier_cfg.sampler_type,
-                sampler_cfg=self.classifier_cfg.sampler_cfg,
-                model=model,
-                args=training_args,
-                data_collator=self.collate_fn,
-                compute_metrics=compute_metrics,
-                train_dataset=self.in_distribution_train_dataset,
-                eval_dataset=self.in_distribution_val_dataset,
-                tokenizer=self.feature_extractor,
-            )
+
+    def initiate_trainer(self, data_source, ood_class_names):
+        self.logger.info(f"Initializing classifier\n")
+        # create OOD and ID datasets folders according to Anomaly Detection stage results
+        create_ood_id_dataset(src_root=os.path.join(data_source, "train"),
+                              target_root=os.path.join(data_source, "train_ood_id_split"),
+                              ood_classes=ood_class_names)
+        create_ood_id_dataset(src_root=os.path.join(data_source, "val"),
+                              target_root=os.path.join(data_source, "val_ood_id_split"),
+                              ood_classes=ood_class_names)
+        self.in_dist_train_dataloader, self.in_dist_val_dataloader = create_dataloaders(
+            data_paths={"train": os.path.join(data_source, "train_ood_id_split"),
+                        "val": os.path.join(data_source, "val_ood_id_split")}, dataset_type=DatasetType.IN_DISTRIBUTION)
+
+        self.id2label = self.in_dist_train_dataloader.dataset.labels_to_classe_names
+        self.label2id = self.in_dist_train_dataloader.dataset.classes_names_to_labels
+
+        train_batch_size = 100
+
+        batch = next(iter(self.in_dist_train_dataloader))
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                print(k, v.shape)
+
+        assert batch['pixel_values'].shape == (train_batch_size, 3, 224, 224)
+        assert batch['labels'].shape == (train_batch_size,)
+
+
+        self.model = ViTLightningModule(train_dataloader=self.in_dist_train_dataloader, val_dataloader=self.in_dist_val_dataloader,
+                                   test_dataloader=self.in_dist_val_dataloader,
+                                   id2label=self.id2label,
+                                   label2id=self.label2id, num_labels=len(self.in_dist_val_dataloader), )
+
+
 
     def train(self):
-        train_results = self.trainer.train()
-        self.trainer.save_model()
-        self.trainer.log_metrics("train", train_results.metrics)
-        self.trainer.save_metrics("train", train_results.metrics)
-        self.trainer.save_state()
-        # evaluate
-        metrics = self.trainer.evaluate(self.in_distribution_val_dataset)
-        self.trainer.log_metrics("eval", metrics)
-        self.trainer.save_metrics("eval", metrics)
+        self.logger.info(f"Starting to train the ViT classifier\n")
+        early_stop_callback = EarlyStopping(
+            monitor='val_loss',
+            patience=3,
+            strict=False,
+            verbose=False,
+            mode='min'
+        )
+        checkpoint_callback = ModelCheckpoint(
+            monitor='val_loss',
+            mode='min',
+            save_top_k=1,
+            dirpath=self.classifier_cfg.checkpoint_path,
+            filename='best_model',
+        )
+        trainer = Trainer(num_nodes=1, callbacks=[early_stop_callback, checkpoint_callback])
+        trainer.fit(self.model)
+
+        """Finally, let's test the trained model on the test set:"""
+
+        trainer.test()
 
     def get_fine_tuned_model(self):
-        model = ViTForImageClassification.from_pretrained(self.classfier_train_output_dir)
+        model = ViTLightningModule.load_from_checkpoint(
+            os.path.join(self.classifier_cfg.checkpoint_path, f"best_model.ckpt"),
+            train_dataloader=self.in_dist_train_dataloader,
+            val_dataloader=self.in_dist_val_dataloader,
+            test_dataloader=self.in_dist_val_dataloader,
+            id2label=self.id2label,
+            label2id=self.label2id,
+            num_labels=len(self.in_dist_val_dataloader)
+        )
         return model
+
+    def evaluate_classifier(self, best_model):
+        all_preds, all_labels = eval_model(dataloader=self.classifier.in_dist_val_dataloader, model=best_model)
+        res_confusion_matrix = confusion_matrix(all_labels, all_preds)
+        plot_confusion_matrix(confusion_matrix=res_confusion_matrix, classes=self.in_dist_train_dataloader.dataset.classes,
+                              normalize=True,
+                              output_dir=self.test_output_dir)
+        plot_confusion_matrix(confusion_matrix=res_confusion_matrix, classes=self.in_dist_train_dataloader.dataset.classes,
+                              normalize=False,
+                              output_dir=self.test_output_dir)

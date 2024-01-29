@@ -24,8 +24,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class OODDetector:
     def __init__(self, output_dir):
         self.output_dir = output_dir
-        os.makedirs(os.path.join(self.output_dir, "train/OOD"), exist_ok=True)
-        os.makedirs(os.path.join(self.output_dir, "test/OOD"), exist_ok=True)
+        train_output = os.path.join(self.output_dir, "train/OOD")
+        self.val_output = os.path.join(self.output_dir, "test/OOD")
+        os.makedirs(train_output, exist_ok=True)
+        os.makedirs(self.val_output, exist_ok=True)
+        self.val_dataset_scores_and_labels = os.path.join(self.val_output, "val_dataset_scores_and_labels.json")
 
     def score_samples(self, dataloader):
         pass

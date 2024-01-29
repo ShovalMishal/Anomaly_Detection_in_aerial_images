@@ -1,18 +1,12 @@
 """This config is orginially from OpenMMLab: <link to github>"""
-dataset_type = 'DOTAv2Dataset'
-data_root = './data/split_ss_dota/'
-output_dir = "./results"
-patches_dataset = dict(
-    path="./data/patches_dataset/",
-    shuffle=False,
-    num_workers=1,
-    inclusion_file_name="nonbg_dataset.txt",
-    ood_classes=["large-vehicle"]  # "helicopter", "tennis-court",
-)
+
+output_dir = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/"
+
 
 anomaly_detector_cfg = dict(
+    type="vit_based_anomaly_detector",
     vit_patch_size=8,
-    vit_arch="vit_small",  # 'vit_tiny', 'vit_small', 'vit_base'
+    vit_arch="vit_base",  # 'vit_tiny', 'vit_small', 'vit_base'
     vit_image_size=(480, 480),
     vit_threshold=None,
     pretrained_weights="",
@@ -21,6 +15,7 @@ anomaly_detector_cfg = dict(
     vit_model_type="dino_vit",  # "dino_vit", "dino_mc_vit"
     proposals_sizes=dict(square=(17,17), horizontal=(11,21), vertical=(21,11)),
     patches_filtering_threshold=85,
+
     patches_assigner=dict(
         type='mmdet.MaxIoUAssigner',
         pos_iou_thr=0.5,
@@ -28,6 +23,7 @@ anomaly_detector_cfg = dict(
         min_pos_iou=0.5,
         match_low_quality=True,
         ignore_iof_thr=-1),
+
     train_dataloader=dict(
         batch_size=1,
         # num_workers=2,
@@ -87,13 +83,11 @@ anomaly_detector_cfg = dict(
             ]))
 )
 
-classifier_cfg = dict(type="vit", train_output_dir="train/OOD/vit-output/runs", test_output_dir="test/OOD/vit-output",
+classifier_cfg = dict(type="vit",
+                      train_output_dir="train/OOD/vit-output/runs",
+                      test_output_dir="test/OOD/vit-output",
                       sampler_type="random",
                       sampler_cfg={"custom_sampler_labels_frequency": {0: 8, 1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}},
-                      per_device_train_batch_size=16, per_device_eval_batch_size=16, evaluation_strategy="steps",
-                      num_train_epochs=4, fp16=True, save_steps=0.1, eval_steps=0.1, logging_steps=0.2,
-                      learning_rate=2e-4, save_total_limit=2, remove_unused_columns=False, push_to_hub=False,
-                      report_to=['tensorboard'], load_best_model_at_end=True,
-                      model_path='google/vit-base-patch16-224-in21k', retrain=True)
+                      model_path='google/vit-base-patch16-224-in21k', retrain=True, checkpoint_path="./checkpoints")
 
-OOD_detector_cfg = dict(type="ODIN")
+OOD_detector_cfg = dict(type="ODIN", ood_class_names=[])
