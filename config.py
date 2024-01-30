@@ -4,6 +4,7 @@ output_dir = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_im
 
 
 anomaly_detector_cfg = dict(
+    skip_stage=True,
     type="vit_based_anomaly_detector",
     vit_patch_size=8,
     vit_arch="vit_base",  # 'vit_tiny', 'vit_small', 'vit_base'
@@ -90,4 +91,4 @@ classifier_cfg = dict(type="vit",
                       sampler_cfg={"custom_sampler_labels_frequency": {0: 8, 1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}},
                       model_path='google/vit-base-patch16-224-in21k', retrain=True, checkpoint_path="./checkpoints")
 
-OOD_detector_cfg = dict(type="ODIN", ood_class_names=[])
+OOD_detector_cfg = dict(type="ODIN", ood_class_names=["ship", "harbor", "roundabout", "helicopter", "swimming-pool"])

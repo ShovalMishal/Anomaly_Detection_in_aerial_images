@@ -71,57 +71,59 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.proposals_sizes = anomaly_detetctor_cfg.proposals_sizes
         self.patches_filtering_threshold = anomaly_detetctor_cfg.patches_filtering_threshold
         self.classes_names = self.train_dataloader.dataset.METAINFO['classes']
+        self.skip_stage = anomaly_detetctor_cfg.skip_stage
 
     def run(self):
         self.logger.info(f"Running anomaly detection stage\n")
-        train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
-        os.makedirs(train_target_dir, exist_ok=True)
-        val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
-        os.makedirs(val_target_dir, exist_ok=True)
-        self.logger.info(f"Anomaly detection - train dataset\n")
-        for batch in tqdm(self.train_dataloader):
-            # measure performance for images with objects only
-            if batch['data_samples'][0].gt_instances.bboxes.size()[0] > 0:
-                heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img=batch['inputs'][0])
+        if not self.skip_stage:
+            train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
+            os.makedirs(train_target_dir, exist_ok=True)
+            val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
+            os.makedirs(val_target_dir, exist_ok=True)
+            self.logger.info(f"Anomaly detection - train dataset\n")
+            for batch in tqdm(self.train_dataloader):
+                # measure performance for images with objects only
+                if batch['data_samples'][0].gt_instances.bboxes.size()[0] > 0:
+                    heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img=batch['inputs'][0])
 
+                    predicted_patches, _, _ = extract_patches_accord_heatmap(heatmap=heatmap,
+                                                                             img_id=batch['data_samples'][0].img_id,
+                                                                             patch_size=self.proposals_sizes['square'],
+                                                                             plot=False,
+                                                                             threshold_percentage=self.patches_filtering_threshold,
+                                                                             target_dir=train_target_dir)
+
+                    assign_predicted_boxes_to_gt_boxes_using_hypothesis(bbox_assigner=self.bbox_assigner,
+                                                                        predicted_boxes=predicted_patches,
+                                                                        data_batch=batch,
+                                                                        img_id=batch['data_samples'][
+                                                                            0].img_id,
+                                                                        dota_obj=self.dota_obj_train,
+                                                                        heatmap=heatmap,
+                                                                        labels_names=self.classes_names,
+                                                                        logger=self.logger,
+                                                                        patch_size=self.proposals_sizes["square"],
+                                                                        plot=False,
+                                                                        target_dir=train_target_dir,
+                                                                        extract_bbox_path=self.output_dir_train_dataset)
+            self.logger.info(f"Anomaly detection - val dataset\n")
+            for batch in tqdm(self.val_dataloader):
+                heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img=batch['inputs'][0])
                 predicted_patches, _, _ = extract_patches_accord_heatmap(heatmap=heatmap,
                                                                          img_id=batch['data_samples'][0].img_id,
                                                                          patch_size=self.proposals_sizes['square'],
                                                                          plot=False,
                                                                          threshold_percentage=self.patches_filtering_threshold,
-                                                                         target_dir=train_target_dir)
-
-                assign_predicted_boxes_to_gt_boxes_using_hypothesis(bbox_assigner=self.bbox_assigner,
-                                                                    predicted_boxes=predicted_patches,
-                                                                    data_batch=batch,
-                                                                    img_id=batch['data_samples'][
-                                                                        0].img_id,
-                                                                    dota_obj=self.dota_obj_train,
-                                                                    heatmap=heatmap,
-                                                                    labels_names=self.classes_names,
-                                                                    logger=self.logger,
-                                                                    patch_size=self.proposals_sizes["square"],
-                                                                    plot=False,
-                                                                    target_dir=train_target_dir,
-                                                                    extract_bbox_path=self.output_dir_train_dataset)
-        self.logger.info(f"Anomaly detection - val dataset\n")
-        for batch in tqdm(self.val_dataloader):
-            heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img=batch['inputs'][0])
-            predicted_patches, _, _ = extract_patches_accord_heatmap(heatmap=heatmap,
-                                                                     img_id=batch['data_samples'][0].img_id,
-                                                                     patch_size=self.proposals_sizes['square'],
-                                                                     plot=False,
-                                                                     threshold_percentage=self.patches_filtering_threshold,
-                                                                     target_dir=val_target_dir)
-            assign_predicted_boxes_to_gt_boxes_and_save_val_stage(bbox_assigner=self.bbox_assigner,
-                                                                  predicted_boxes=predicted_patches,
-                                                                  data_batch=batch,
-                                                                  img_id=batch['data_samples'][0].img_id,
-                                                                  dota_obj=self.dota_obj_val,
-                                                                  heatmap=heatmap,
-                                                                  labels_names=self.classes_names,
-                                                                  patch_size=self.proposals_sizes["square"],
-                                                                  logger=self.logger,
-                                                                  plot=False,
-                                                                  target_dir=val_target_dir,
-                                                                  extract_bbox_path=self.output_dir_val_dataset)
+                                                                         target_dir=val_target_dir)
+                assign_predicted_boxes_to_gt_boxes_and_save_val_stage(bbox_assigner=self.bbox_assigner,
+                                                                      predicted_boxes=predicted_patches,
+                                                                      data_batch=batch,
+                                                                      img_id=batch['data_samples'][0].img_id,
+                                                                      dota_obj=self.dota_obj_val,
+                                                                      heatmap=heatmap,
+                                                                      labels_names=self.classes_names,
+                                                                      patch_size=self.proposals_sizes["square"],
+                                                                      logger=self.logger,
+                                                                      plot=False,
+                                                                      target_dir=val_target_dir,
+                                                                      extract_bbox_path=self.output_dir_val_dataset)

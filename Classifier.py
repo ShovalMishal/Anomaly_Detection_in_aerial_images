@@ -1,7 +1,6 @@
 import os
 from enum import Enum
 from typing import Union, Optional, Dict, Callable, List, Tuple
-
 import torch
 from plotly.figure_factory import np
 from sklearn.metrics import confusion_matrix
@@ -22,7 +21,7 @@ from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
 from results import plot_confusion_matrix
 from utils import create_patches_dataset, eval_model
 from datasets import load_metric, Dataset
-from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments, Trainer, PreTrainedModel, \
+from transformers import ViTForImageClassification, ViTImageProcessor, TrainingArguments,  PreTrainedModel, \
     DataCollator, PreTrainedTokenizerBase, EvalPrediction, TrainerCallback
 from CustomSampler import CustomSampler
 
@@ -181,21 +180,21 @@ class VitClassifier(Classifier):
         self.model = ViTLightningModule(train_dataloader=self.in_dist_train_dataloader, val_dataloader=self.in_dist_val_dataloader,
                                    test_dataloader=self.in_dist_val_dataloader,
                                    id2label=self.id2label,
-                                   label2id=self.label2id, num_labels=len(self.in_dist_val_dataloader), )
+                                   label2id=self.label2id, num_labels=len(self.id2label), )
 
 
 
     def train(self):
         self.logger.info(f"Starting to train the ViT classifier\n")
         early_stop_callback = EarlyStopping(
-            monitor='val_loss',
+            monitor='validation_loss',
             patience=3,
             strict=False,
             verbose=False,
             mode='min'
         )
         checkpoint_callback = ModelCheckpoint(
-            monitor='val_loss',
+            monitor='validation_loss',
             mode='min',
             save_top_k=1,
             dirpath=self.classifier_cfg.checkpoint_path,
