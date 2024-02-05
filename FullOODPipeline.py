@@ -5,11 +5,10 @@ from argparse import ArgumentParser
 import torch
 from mmengine.config import Config
 
-
 from AnomalyDetector import VitBasedAnomalyDetector
 from Classifier import VitClassifier
 from OODDetector import ODINOODDetector
-from OOD_Upper_Bound.finetune_vit_classifier import create_dataloaders, DatasetType
+from Classifier import create_dataloaders, DatasetType
 from results import plot_graphs
 from utils import create_logger
 
@@ -38,36 +37,40 @@ class FullODDPipeline:
         self.anomaly_detector.run()
         self.classifier.initiate_trainer(data_source=self.anomaly_detector.data_output_dir,
                                          ood_class_names=self.OOD_detector_cfg.ood_class_names)
-        self.classifier.train()
+        if self.classifier_cfg.retrain:
+            self.classifier.train()
 
     def test(self):
         torch.cuda.empty_cache()
+        self.logger.info("Starting testing stage...")
         os.makedirs(os.path.join(self.output_dir, "test"), exist_ok=True)
         model = self.classifier.get_fine_tuned_model().to(device)
-        model=model.eval()
-        # get confusion matrix for each label
-        self.classifier.evaluate_classifier(model=model)
+        model = model.eval()
+        self.logger.info("Evaluate trained model...")
+        self.classifier.evaluate_classifier(best_model=model)
         self.OOD_detector.model = model
-        train_dataloader, val_dataloader = create_dataloaders(
+        _, _, test_dataloader = create_dataloaders(
             data_paths={"train": self.anomaly_detector.output_dir_train_dataset,
-                        "val": self.anomaly_detector.output_dir_val_dataset}, dataset_type=DatasetType.NONE,
+                        "val": self.anomaly_detector.output_dir_val_dataset,
+                        "test": self.anomaly_detector.output_dir_test_dataset}, dataset_type=DatasetType.NONE,
                         ood_classes_names=self.OOD_detector_cfg.ood_class_names)
 
-        if not os.path.exists(self.OOD_detector.val_dataset_scores_and_labels):
-            scores, labels, preds = self.OOD_detector.score_samples(dataloader=val_dataloader)
+        if not os.path.exists(self.OOD_detector.test_dataset_scores_and_labels):
+            scores, labels, preds = self.OOD_detector.score_samples(dataloader=test_dataloader)
             labels_scores_dict = {'scores': scores.tolist(), 'labels': labels.tolist(), 'preds': preds.tolist()}
-            with open(self.OOD_detector.val_dataset_scores_and_labels, 'w') as f:
+            with open(self.OOD_detector.test_dataset_scores_and_labels, 'w') as f:
                 json.dump(labels_scores_dict, f, indent=4)
         else:
-            with open(self.OOD_detector.val_dataset_scores_and_labels, 'r') as file:
+            with open(self.OOD_detector.test_dataset_scores_and_labels, 'r') as file:
                 data = json.load(file)
                 scores = torch.tensor(data['scores'])
                 labels = torch.tensor(data['labels'])
                 preds = torch.tensor(data['preds'])
 
-        plot_graphs(scores=scores, labels=labels, path= self.OOD_detector.val_output, title="OOD stage",
-                    abnormal_labels=list(val_dataloader.dataset.ood_classes.values()), dataset_name="val",
-                    ood_mode=True, labels_to_classes_names=val_dataloader.dataset.labels_to_classe_names)
+        plot_graphs(scores=scores, labels=labels, path= self.OOD_detector.test_output, title="OOD stage",
+                    abnormal_labels=list(test_dataloader.dataset.ood_classes.values()), dataset_name="test",
+                    ood_mode=True, labels_to_classes_names=test_dataloader.dataset.labels_to_classe_names)
+
 
 
 def main():

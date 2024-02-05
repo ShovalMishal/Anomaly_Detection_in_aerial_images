@@ -67,7 +67,7 @@ import torch.nn as nn
 
 
 class ViTLightningModule(pl.LightningModule):
-    def __init__(self, train_dataloader, val_dataloader, test_dataloader, id2label, label2id, num_labels=10, ):
+    def __init__(self, train_dataloader, val_dataloader, test_dataloader, id2label, label2id, num_labels=10):
         super(ViTLightningModule, self).__init__()
         self._train_dataloader = train_dataloader
         self._val_dataloader = val_dataloader
@@ -77,16 +77,17 @@ class ViTLightningModule(pl.LightningModule):
                                                              id2label=id2label,
                                                              label2id=label2id)
 
+
     def forward(self, pixel_values):
         outputs = self.vit(pixel_values=pixel_values)
         return outputs.logits
 
-    def common_step(self, batch, batch_idx):
+    def common_step(self, batch, batch_idx, weights=None):
         pixel_values = batch['pixel_values']
         labels = batch['labels']
         logits = self(pixel_values)
 
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=weights)
         loss = criterion(logits, labels)
         predictions = logits.argmax(-1)
         correct = (predictions == labels).sum().item()
@@ -95,7 +96,7 @@ class ViTLightningModule(pl.LightningModule):
         return loss, accuracy
 
     def training_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
+        loss, accuracy = self.common_step(batch, batch_idx, weights=self._train_dataloader.dataset.weights)
         # logs metrics for each training_step,
         # and the average across the epoch
         self.log("training_loss", loss)
@@ -182,21 +183,28 @@ def create_dataloaders(data_paths, dataset_type: DatasetType, ood_classes_names=
     )
     train_batch_size = 100
     eval_batch_size = 100
-    train_ds = OODAndIDDataset(root_dir=os.path.join(data_paths["train"], "images") if dataset_type is DatasetType.NONE
+    train_ds = OODAndIDDataset(root_dir=os.path.join(data_paths["train"]) if dataset_type is DatasetType.NONE
     else os.path.join(data_paths["train"], f"{dataset_type.value}_dataset"),
                                dataset_type="train",
                                transform=_train_transforms,
                                ood_classes_names=ood_classes_names)
     val_ds = OODAndIDDataset(
-        root_dir=os.path.join(data_paths["val"], "images") if dataset_type is DatasetType.NONE else
+        root_dir=os.path.join(data_paths["val"]) if dataset_type is DatasetType.NONE else
         os.path.join(data_paths["val"], f"{dataset_type.value}_dataset"),
         dataset_type="val",
+        transform=_val_transforms,
+        ood_classes_names=ood_classes_names)
+    test_ds = OODAndIDDataset(
+        root_dir=os.path.join(data_paths["test"]) if dataset_type is DatasetType.NONE else
+        os.path.join(data_paths["test"], f"{dataset_type.value}_dataset"),
+        dataset_type="test",
         transform=_val_transforms,
         ood_classes_names=ood_classes_names)
     train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=collate_fn, batch_size=train_batch_size,
                                   num_workers=12)
     val_dataloader = DataLoader(val_ds, collate_fn=collate_fn, batch_size=eval_batch_size, num_workers=12)
-    return train_dataloader, val_dataloader
+    test_dataloader = DataLoader(test_ds, collate_fn=collate_fn, batch_size=eval_batch_size, num_workers=12)
+    return train_dataloader, val_dataloader, test_dataloader
 
 
 def train_classifier(train_dataloader, val_dataloader, num_labels=18, train=True):

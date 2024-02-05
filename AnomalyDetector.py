@@ -41,10 +41,13 @@ class AnomalyDetector:
         # create train, test and validation datasets
         self.train_dataloader = create_dataloader(dataloader_cfg=anomaly_detector_cfg.train_dataloader)
         self.val_dataloader = create_dataloader(dataloader_cfg=anomaly_detector_cfg.val_dataloader)
+        self.test_dataloader = create_dataloader(dataloader_cfg=anomaly_detector_cfg.test_dataloader)
         self.dataloaders = {"train": self.train_dataloader,
-                            "val": self.val_dataloader}
+                            "val": self.val_dataloader,
+                            "test": self.test_dataloader}
         self.output_dir_train_dataset = os.path.join(self.data_output_dir, "train")
         self.output_dir_val_dataset = os.path.join(self.data_output_dir, "val")
+        self.output_dir_test_dataset = os.path.join(self.data_output_dir, "test")
 
     def run(self):
         pass
@@ -57,6 +60,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.logger.info(f"Creating anomaly detector\n")
         self.dota_obj_train = DOTA(basepath=anomaly_detetctor_cfg.train_dataloader.dataset.data_root)
         self.dota_obj_val = DOTA(basepath=anomaly_detetctor_cfg.val_dataloader.dataset.data_root)
+        self.dota_obj_test = DOTA(basepath=anomaly_detetctor_cfg.test_dataloader.dataset.data_root)
         self.dino_vit_bg_subtractor = BGSubtractionWithDinoVit(target_dir=self.output_dir,
                                                                vit_patch_size=anomaly_detetctor_cfg.vit_patch_size,
                                                                vit_arch=anomaly_detetctor_cfg.vit_arch,
@@ -80,6 +84,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             os.makedirs(train_target_dir, exist_ok=True)
             val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
             os.makedirs(val_target_dir, exist_ok=True)
+            test_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "test_dataset")
+            os.makedirs(test_target_dir, exist_ok=True)
             self.logger.info(f"Anomaly detection - train dataset\n")
             for batch in tqdm(self.train_dataloader):
                 # measure performance for images with objects only
@@ -127,3 +133,25 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                       plot=False,
                                                                       target_dir=val_target_dir,
                                                                       extract_bbox_path=self.output_dir_val_dataset)
+
+            self.logger.info(f"Anomaly detection - test dataset\n")
+            for batch in tqdm(self.test_dataloader):
+                heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img=batch['inputs'][0])
+                predicted_patches, _, _ = extract_patches_accord_heatmap(heatmap=heatmap,
+                                                                         img_id=batch['data_samples'][0].img_id,
+                                                                         patch_size=self.proposals_sizes['square'],
+                                                                         plot=False,
+                                                                         threshold_percentage=self.patches_filtering_threshold,
+                                                                         target_dir=test_target_dir)
+                assign_predicted_boxes_to_gt_boxes_and_save_val_stage(bbox_assigner=self.bbox_assigner,
+                                                                      predicted_boxes=predicted_patches,
+                                                                      data_batch=batch,
+                                                                      img_id=batch['data_samples'][0].img_id,
+                                                                      dota_obj=self.dota_obj_test,
+                                                                      heatmap=heatmap,
+                                                                      labels_names=self.classes_names,
+                                                                      patch_size=self.proposals_sizes["square"],
+                                                                      logger=self.logger,
+                                                                      plot=False,
+                                                                      target_dir=test_target_dir,
+                                                                      extract_bbox_path=self.output_dir_test_dataset)

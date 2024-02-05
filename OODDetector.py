@@ -24,11 +24,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class OODDetector:
     def __init__(self, output_dir):
         self.output_dir = output_dir
-        train_output = os.path.join(self.output_dir, "train/OOD")
-        self.val_output = os.path.join(self.output_dir, "test/OOD")
-        os.makedirs(train_output, exist_ok=True)
-        os.makedirs(self.val_output, exist_ok=True)
-        self.val_dataset_scores_and_labels = os.path.join(self.val_output, "val_dataset_scores_and_labels.json")
+        self.train_output = os.path.join(self.output_dir, "train/OOD")
+        self.test_output = os.path.join(self.output_dir, "test/OOD")
+        os.makedirs(self.train_output, exist_ok=True)
+        os.makedirs(self.test_output, exist_ok=True)
+        self.test_dataset_scores_and_labels = os.path.join(self.test_output, "test_dataset_scores_and_labels.json")
 
     def score_samples(self, dataloader):
         pass
@@ -83,6 +83,7 @@ class ODINOODDetector(OODDetector):
         all_labels = []
         all_preds = []
         cache_dir = '/tmp/odin_scores/'
+        os.makedirs(cache_dir, exist_ok=True)
         cache_index = 0
         for batch in tqdm(dataloader):
             images = batch['pixel_values']

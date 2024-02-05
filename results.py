@@ -144,19 +144,22 @@ def plot_confusion_matrix(confusion_matrix, classes, normalize=True, output_dir=
         correct += confusion_matrix[i, i]
     correct / confusion_matrix.sum()
     acc = correct / confusion_matrix.sum() * 100
-    confusion_matrix = confusion_matrix.astype(float)
+    normalized_confusion_matrix = confusion_matrix.astype(float)
     if normalize:
-        for idx in range(len(confusion_matrix)):
-            confusion_matrix[idx, ...] = confusion_matrix[idx, ...] / confusion_matrix[idx, ...].sum()
+        for idx in range(len(normalized_confusion_matrix)):
+            normalized_confusion_matrix[idx, ...] = normalized_confusion_matrix[idx, ...] / normalized_confusion_matrix[idx, ...].sum()
     title = " normalized " if normalize else " "
     file_name = "normalized_" if normalize else ""
-    plt.imshow(confusion_matrix)
+    plt.imshow(normalized_confusion_matrix)
+    for i in range(confusion_matrix.shape[0]):
+        for j in range(confusion_matrix.shape[1]):
+            plt.text(j, i, f'{confusion_matrix[i, j]}', ha='center', va='center', color='white')
     plt.colorbar()
     plt.xticks(range(len(classes)), classes, rotation=90)
     plt.yticks(range(len(classes)), classes)
     plt.title(
         f'confusion matrix{title}according to rows\naccuracy: {acc:.2f}[%]')
     plt.tight_layout()
-    plt.show()
     plt.savefig(os.path.join(output_dir, f"{file_name}training_confusion_matrix.png"))
+    plt.show()
 
