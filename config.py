@@ -8,7 +8,7 @@ anomaly_detector_cfg = dict(
     type="vit_based_anomaly_detector",
     vit_patch_size=8,
     vit_arch="vit_base",  # 'vit_tiny', 'vit_small', 'vit_base'
-    vit_image_size=(480, 480),
+    vit_image_size=(512, 512),
     vit_threshold=None,
     pretrained_weights="",
     checkpoint_key="teacher",
@@ -27,10 +27,10 @@ anomaly_detector_cfg = dict(
 
     train_dataloader=dict(
         batch_size=1,
-        # num_workers=2,
-        num_workers=0,
-        # persistent_workers=True,
-        persistent_workers=False,
+        num_workers=2,
+        # num_workers=0,
+        persistent_workers=True,
+        # persistent_workers=False,
         drop_last=False,
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
@@ -46,7 +46,7 @@ anomaly_detector_cfg = dict(
                 dict(
                     type='ConvertBoxType',
                     box_type_mapping=dict(gt_bboxes='hbox')),
-                dict(type='mmdet.Resize', scale=(480, 480), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -56,10 +56,10 @@ anomaly_detector_cfg = dict(
 
     val_dataloader=dict(
         batch_size=1,
-        # num_workers=2,
-        num_workers=0,
-        # persistent_workers=True,
-        persistent_workers=False,
+        num_workers=2,
+        # num_workers=0,
+        persistent_workers=True,
+        # persistent_workers=False,
         drop_last=False,
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
@@ -75,7 +75,7 @@ anomaly_detector_cfg = dict(
                 dict(
                     type='ConvertBoxType',
                     box_type_mapping=dict(gt_bboxes='hbox')),
-                dict(type='mmdet.Resize', scale=(480, 480), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -85,10 +85,10 @@ anomaly_detector_cfg = dict(
 
     test_dataloader = dict(
         batch_size=1,
-        # num_workers=2,
-        num_workers=0,
-        # persistent_workers=True,
-        persistent_workers=False,
+        num_workers=2,
+        # num_workers=0,
+        persistent_workers=True,
+        # persistent_workers=False,
         drop_last=False,
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
@@ -104,7 +104,7 @@ anomaly_detector_cfg = dict(
                 dict(
                     type='ConvertBoxType',
                     box_type_mapping=dict(gt_bboxes='hbox')),
-                dict(type='mmdet.Resize', scale=(480, 480), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -118,4 +118,4 @@ classifier_cfg = dict(type="vit",
                       test_output_dir="test/OOD/vit-output",
                       model_path='google/vit-base-patch16-224-in21k', retrain=True, checkpoint_path="./checkpoints")
 
-OOD_detector_cfg = dict(type="ODIN", ood_class_names=["ship", "harbor", "roundabout", "helicopter", "swimming-pool", "storage-tank"])
+OOD_detector_cfg = dict(type="ODIN", ood_class_names=["ship", "harbor", "roundabout", "helicopter", "swimming-pool", "storage-tank", "bridge"])

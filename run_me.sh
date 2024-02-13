@@ -1,0 +1,1 @@
+python ./OOD_Upper_Bound/OOD_Detector_RUN.py --data_source /storage/shoval/upper_bound_experiment/input --ood_class_names helicopter roundabout ship storage-tank swimming-pool harbor --train --output /storage/shoval/upper_bound_experiment/output

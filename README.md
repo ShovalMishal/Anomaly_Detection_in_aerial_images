@@ -6,8 +6,11 @@ Finally, testing ood model, based on the trained classifier in order to detect o
 
 ## Requirements
 You should clone this repo, mmrotate and mmdet repos.
+
 mmrotate - https://github.com/ShovalMishal/mmrotate/tree/dev-1.x
+
 mmdet - https://github.com/ShovalMishal/mmdection/tree/dev-3.x
+
 Then you should create an environment based on the requirements file here.
 you should install them in the new environment according to their README.
 
@@ -16,12 +19,10 @@ Here is a link to the final validation and train datasets you should use to run 
 
 
 ## Training and testing full pipeline
-Run the following command:
-python FullOODPipeline.py -c ./Anomaly_Detection_in_aerial_images/config.py 
-Then, the anomaly detetction runs and extracting objective bounding boxes according to dino vit results.
-After, the classifier is fine-tuned for the OOD stage. 
-Finally, you get the statistics for the OOD detection experiment.
-You need to update the relevant configurations in the config file, which is in this repo and supply it to the main script, by running:
+You need to update the relevant configurations in the config file, which is in this repo and supply it to the main script by running the following command:
 ```shell
 python ./FullOODPipeline.py -c ./config.py 
-```
+``` 
+Then, the anomaly detection runs and extracting objective bounding boxes according to dino vit results.
+After, the classifier is fine-tuned for the OOD stage. 
+Finally, you get the statistics for the OOD detection experiment.

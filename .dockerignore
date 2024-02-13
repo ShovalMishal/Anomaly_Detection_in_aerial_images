@@ -1,0 +1,8 @@
+./old_results
+./results
+./checkpoints
+./lightning_logs
+./__pycache__
+./.idea
+./out
+./.git
