@@ -4,13 +4,11 @@
 
 Here we import a small portion of CIFAR-10, for demonstration purposes. This dataset can be found on the [hub](https://huggingface.co/datasets/cifar10) (you can view images directly in your browser!).
 """
-import json
+
 import os
 from enum import Enum
 
-from datasets import load_dataset
-from sklearn.metrics import confusion_matrix
-from torchvision.datasets import ImageFolder
+
 
 from OODDetector import ODINOODDetector
 from OOD_Upper_Bound.ood_and_id_dataset import OODAndIDDataset
@@ -45,6 +43,7 @@ from torchvision.transforms import (CenterCrop,
 from torch.utils.data import DataLoader
 import torch
 
+device = torch.device("cuda" if torch.cuda.is_available() else "")
 
 def collate_fn(examples):
     pixel_values = torch.stack([example[0] for example in examples])
@@ -96,7 +95,7 @@ class ViTLightningModule(pl.LightningModule):
         return loss, accuracy
 
     def training_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx, weights=self._train_dataloader.dataset.weights)
+        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._train_dataloader.dataset.weights.values())).to(device))
         # logs metrics for each training_step,
         # and the average across the epoch
         self.log("training_loss", loss)
@@ -105,14 +104,14 @@ class ViTLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
+        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._val_dataloader.dataset.weights.values())).to(device))
         self.log("validation_loss", loss, on_epoch=True)
         self.log("validation_accuracy", accuracy, on_epoch=True)
 
         return loss
 
     def test_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
+        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._test_dataloader.dataset.weights.values())).to(device))
 
         return loss
 
@@ -148,7 +147,7 @@ We also add a callback:
 """
 
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 
 class DatasetType(Enum):
@@ -207,7 +206,7 @@ def create_dataloaders(data_paths, dataset_type: DatasetType, ood_classes_names=
     return train_dataloader, val_dataloader, test_dataloader
 
 
-def train_classifier(train_dataloader, val_dataloader, num_labels=18, train=True):
+def train_classifier(train_dataloader, val_dataloader, output, num_labels=18, train=True):
     # train_ds, test_ds = load_dataset('cifar10', split=['train[:5000]', 'test[:2000]'])
 
     # split up training into training + validation
@@ -233,11 +232,14 @@ def train_classifier(train_dataloader, val_dataloader, num_labels=18, train=True
     assert batch['labels'].shape == (train_batch_size,)
 
     early_stop_callback = EarlyStopping(
-        monitor='val_loss',
-        patience=3,
-        strict=False,
-        verbose=False,
-        mode='min'
+        monitor='validation_loss'
+    )
+    checkpoint_callback = ModelCheckpoint(
+        monitor='validation_loss',
+        mode='min',
+        save_top_k=1,
+        dirpath=os.path.join(output, "checkpoints"),
+        filename='best_model_id_classifier',
     )
     model = ViTLightningModule(train_dataloader=train_dataloader, val_dataloader=val_dataloader,
                                test_dataloader=val_dataloader,
@@ -245,16 +247,16 @@ def train_classifier(train_dataloader, val_dataloader, num_labels=18, train=True
                                label2id=label2id, num_labels=num_labels, )
 
     if train:
-        trainer = Trainer(num_nodes=1, callbacks=[EarlyStopping(monitor='validation_loss')])
+        trainer = Trainer(num_nodes=1, callbacks=[early_stop_callback, checkpoint_callback])
         trainer.fit(model)
 
         """Finally, let's test the trained model on the test set:"""
 
-        trainer.test()
+        trainer.test(ckpt_path='best')
         model = trainer.model
     else:
         model = ViTLightningModule.load_from_checkpoint(
-            "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/OOD_Upper_Bound/lightning_logs/version_0/checkpoints/epoch=7-step=14248.ckpt",
+            os.path.join(output, "checkpoints/best_model_id_classifier.ckpt"),
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
             test_dataloader=val_dataloader,
