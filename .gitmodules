@@ -4,3 +4,6 @@
 [submodule "single_image_bg_detector"]
 	path = single_image_bg_detector
 	url = https://github.com/ShovalMishal/single-image-bg-detector.git
+[submodule "resnet_pytorch_small_images"]
+	path = resnet_pytorch_small_images
+	url = https://github.com/ShovalMishal/resnet_pytorch_small_images.git
