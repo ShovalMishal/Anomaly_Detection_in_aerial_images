@@ -1,1 +1,3 @@
-python ./OOD_Upper_Bound/OOD_Detector_RUN.py --data_source /storage/shoval/upper_bound_experiment/input --ood_class_names helicopter roundabout ship storage-tank swimming-pool harbor --train --output /storage/shoval/upper_bound_experiment/output
+sed 's/nameserver 10.*/nameserver 132.66.150.2/' /etc/resolv.conf >/tmp/R$$
+cp /tmp/R$$ /etc/resolv.conf
+python ./FullOODPipeline.py -c ./config.py

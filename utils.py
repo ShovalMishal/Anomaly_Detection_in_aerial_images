@@ -1,4 +1,5 @@
 import json
+import pickle
 import shutil
 import logging
 import os
@@ -11,6 +12,7 @@ from sklearn.metrics import confusion_matrix
 from ImagePyramidPatchesDataset import ImagePyramidPatchesDataset
 from mmengine.runner import Runner
 import copy
+from PIL import Image
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def create_logger(path):
@@ -118,25 +120,72 @@ def calculate_confusion_matrix(dataloader, model, logger, dataset_name="", path=
 
 
 
-def eval_model(dataloader, model):
+def eval_model(dataloader, model, cache_dir=""):
+    cache_dir = os.path.join(cache_dir, "test_results")
+    os.makedirs(cache_dir, exist_ok=True)
     all_preds = []
     all_labels = []
     model = model.to(device)
     model.eval()
-    for batch in tqdm(dataloader):
+    next_cache_index = 0
+    curr_cache_index = 0
+
+    for batch_ind, batch in tqdm(enumerate(dataloader)):
+        curr_cache_index = batch_ind // 1000
+        file_related_path = os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl')
+        if os.path.exists(file_related_path):
+            next_cache_index = curr_cache_index+1
+            del batch
+            continue
+
+        if curr_cache_index != next_cache_index:
+            print(next_cache_index)
+            with open(os.path.join(cache_dir, f'all_preds_cache_{next_cache_index}.pkl'), 'wb') as f:
+                pickle.dump(all_preds, f)
+            with open(os.path.join(cache_dir, f'all_labels_cache_{next_cache_index}.pkl'), 'wb') as f:
+                pickle.dump(all_labels, f)
+            all_labels = []
+            all_preds = []
+            next_cache_index = curr_cache_index
         images = batch['pixel_values']
         labels = batch['labels']
         with torch.no_grad():
-            pred = model(images.to(device))
+            images = images.to(device)
+            pred = model(images)
         try:
             pred_labels = torch.argmax(pred["logits"].data.cpu().detach(), dim=1)
         except:
             pred_labels = torch.argmax(pred.data.cpu().detach(), dim=1)
         all_preds.append(pred_labels)
         all_labels.append(labels.cpu())
-    all_preds = torch.cat(all_preds, dim=0)
-    all_labels = torch.cat(all_labels, dim=0)
-    return all_preds, all_labels
+
+        del images, labels, pred
+        torch.cuda.empty_cache()
+
+    file_related_path = os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl')
+    if not os.path.exists(file_related_path):
+        with open(os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl'), 'wb') as f:
+            pickle.dump(all_preds, f)
+        with open(os.path.join(cache_dir, f'all_labels_cache_{curr_cache_index}.pkl'), 'wb') as f:
+            pickle.dump(all_labels, f)
+    all_labels_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_labels_cache_')]
+    all_labels_caches.sort(key=lambda x: int(x.split('all_labels_cache_')[-1].split('.pkl')[0]))
+    all_labels = []
+    for cache_name in all_labels_caches:
+        with open(os.path.join(cache_dir, cache_name), 'rb') as f:
+            all_labels.append(pickle.load(f))
+    all_labels = sum(all_labels, [])
+    all_preds_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_preds_cache_')]
+    all_preds_caches.sort(key=lambda x: int(x.split('all_preds_cache_')[-1].split('.pkl')[0]))
+    all_preds = []
+    for cache_name in all_preds_caches:
+        with open(os.path.join(cache_dir, cache_name), 'rb') as f:
+            all_preds.append(pickle.load(f))
+    all_preds = sum(all_preds, [])
+
+    all_preds_final, all_labels_final = torch.cat(all_preds, dim=0), torch.cat(all_labels, dim=0)
+    assert all_preds_final.shape[0] == all_labels_final.shape[0], "lables and preds lengths are not equal"
+    return torch.cat(all_preds, dim=0), torch.cat(all_labels, dim=0)
 
 
 def create_and_save_confusion_matrix(path, dataset_name, logger, all_labels=None, all_preds=None):
@@ -151,4 +200,42 @@ def create_and_save_confusion_matrix(path, dataset_name, logger, all_labels=None
     logger.info(res_confusion_matrix)
 
 
+def plot_outliers_images():
+    from matplotlib import pyplot as plt
 
+    # Path to the folder containing the images
+    folder_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/test/OOD/weights_in_loss_and_sampling_bg_in_val_and_train_datasets/outliers/50_highest_scores_patches"
+    # Get a list of all image files in the folder
+    image_files = [f for f in os.listdir(folder_path) if f.endswith('.jpg')]
+
+    # Define the number of images to display per row and column
+    num_images_per_row = 10
+    num_images_per_col = 5
+
+    # Create a new figure
+    fig, axs = plt.subplots(num_images_per_col, num_images_per_row, tight_layout=True)
+
+    # Loop through the images and display them on the plot
+    for i, file in enumerate(image_files):
+        # Calculate the position of the image in the grid
+        row = i // num_images_per_row
+        col = i % num_images_per_row
+
+        # Load the image using PIL
+        img = Image.open(os.path.join(folder_path, file))
+
+        # Display the image on the plot
+        axs[row, col].imshow(img)
+
+        axs[row, col].axis('off')
+
+        # Set the title of the image as its name
+        axs[row, col].set_title(file[:file.find("_")], fontsize=7)
+
+    # Adjust spacing between subplots
+    plt.subplots_adjust(wspace=0.3, hspace=1)
+    # Show the plot
+    plt.savefig(os.path.dirname(folder_path) + "/50_highest_scores_patches.jpg")
+
+if __name__ == '__main__':
+    plot_outliers_images()

@@ -1,8 +1,7 @@
-ARG PYTORCH="1.12.1"
-ARG CUDA="11.3"
-ARG CUDNN="8"
+FROM python:3.8
+RUN pip install setuptools wheel
+RUN pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 -f https://download.pytorch.org/whl/torch_stable.html
 
-FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-devel
 
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX"
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
@@ -16,19 +15,21 @@ RUN apt-get update && apt-get install -y ffmpeg libsm6 libxext6 git ninja-build 
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN conda install scikit-image scikit-learn plotly
+RUN pip install scikit-image scikit-learn plotly
 
 # Install MMCV MMDetection
-RUN pip install -U openmim && mim install mmengine && mim install "mmcv>=2.0.0rc2"
-
-# # Install MMRotate
+RUN pip install -U openmim && mim install mmengine && mim install "mmcv>=2.0.0rc4, <2.1.0"
+ # Install MMRotate
 RUN git clone --branch dev-3.x https://github.com/ShovalMishal/mmdection.git /mmdetection
 RUN pip install --no-cache-dir -e /mmdetection
 RUN git clone --branch dev-1.x https://github.com/ShovalMishal/mmrotate.git /mmrotate
 RUN pip install --no-cache-dir -e /mmrotate
 
 RUN pip install ipdb
-RUN pip install transformers
-RUN pip install pytorch-lightning
-
+RUN pip install transformers=="4.29.2"
+RUN pip install pytorch-lightning=="2.1.2"
+RUN apt-get update && apt-get install nano
+RUN pip install tensorboard=="1.15.0"
+RUN pip install numpy=="1.22.0"
+RUN pip install protobuf=="3.20.3"
 

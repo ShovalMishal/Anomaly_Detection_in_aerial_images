@@ -35,7 +35,7 @@ class AnomalyDetector:
     def __init__(self, output_dir, anomaly_detector_cfg, logger):
         self.logger = logger
         self.output_dir = os.path.join(output_dir, "train/anomaly_detection_result")
-        self.data_output_dir = os.path.join(self.output_dir, "extracted_bboxes_data")
+        self.data_output_dir = os.path.join(self.output_dir, anomaly_detector_cfg.data_output_dir_name)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.data_output_dir, exist_ok=True)
         # create train, test and validation datasets
@@ -132,7 +132,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                       logger=self.logger,
                                                                       plot=False,
                                                                       target_dir=val_target_dir,
-                                                                      extract_bbox_path=self.output_dir_val_dataset)
+                                                                      extract_bbox_path=self.output_dir_val_dataset,
+                                                                      is_val=True)
 
             self.logger.info(f"Anomaly detection - test dataset\n")
             for batch in tqdm(self.test_dataloader):

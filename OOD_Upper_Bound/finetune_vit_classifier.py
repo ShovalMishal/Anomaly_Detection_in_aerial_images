@@ -1,13 +1,6 @@
-# !pip install -q transformers datasets pytorch-lightning
-
-"""## Load the data
-
-Here we import a small portion of CIFAR-10, for demonstration purposes. This dataset can be found on the [hub](https://huggingface.co/datasets/cifar10) (you can view images directly in your browser!).
-"""
 
 import os
 from enum import Enum
-
 
 
 from OODDetector import ODINOODDetector
@@ -24,7 +17,7 @@ We will perform data augmentaton **on-the-fly** using HuggingFace Datasets' `set
 We first load the image processor, which is a minimal object that can be used to prepare images for inference. We use some of its properties which are relevant for preparing images for the model.
 """
 
-from transformers import ViTImageProcessor
+from transformers import ViTImageProcessor, ViTConfig
 
 """For data augmentation, one can use any available library. Here we'll use torchvision's [transforms module](https://pytorch.org/vision/stable/transforms.html)."""
 
@@ -43,7 +36,7 @@ from torchvision.transforms import (CenterCrop,
 from torch.utils.data import DataLoader
 import torch
 
-device = torch.device("cuda" if torch.cuda.is_available() else "")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def collate_fn(examples):
     pixel_values = torch.stack([example[0] for example in examples])
@@ -66,15 +59,35 @@ import torch.nn as nn
 
 
 class ViTLightningModule(pl.LightningModule):
-    def __init__(self, train_dataloader, val_dataloader, test_dataloader, id2label, label2id, num_labels=10):
+    def __init__(self, train_dataloader, val_dataloader, test_dataloader, id2label, label2id, model_path="",
+                 loss_class_weights=False, num_labels=10, logger=None):
         super(ViTLightningModule, self).__init__()
         self._train_dataloader = train_dataloader
         self._val_dataloader = val_dataloader
         self._test_dataloader = test_dataloader
-        self.vit = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224-in21k',
+        self.training_weights = torch.tensor(list(self._train_dataloader.dataset.class_weights.values())).to(device) \
+            if loss_class_weights else None
+        self.validation_weights = torch.tensor(list(self._val_dataloader.dataset.class_weights.values())).to(device) \
+            if loss_class_weights else None
+        # if model_path:
+        # logger.info("Load pretrained model from {}".format('google/vit-base-patch16-224-in21k'))
+        self.vit = ViTForImageClassification.from_pretrained(pretrained_model_name_or_path='google/vit-base-patch16-224-in21k',
                                                              num_labels=num_labels,
                                                              id2label=id2label,
                                                              label2id=label2id)
+        # else:
+        #     config = ViTConfig(
+        #         image_size=32,
+        #         patch_size=8,
+        #         num_hidden_layers=12,
+        #         num_attention_heads=12,
+        #         hidden_size=768,
+        #         num_labels=num_labels,
+        #         id2label=id2label,
+        #         label2id=label2id,
+        #     )
+        #     self.vit = ViTForImageClassification(config)
+        self.vit = self.vit.to(device)
 
 
     def forward(self, pixel_values):
@@ -82,9 +95,9 @@ class ViTLightningModule(pl.LightningModule):
         return outputs.logits
 
     def common_step(self, batch, batch_idx, weights=None):
-        pixel_values = batch['pixel_values']
-        labels = batch['labels']
-        logits = self(pixel_values)
+        pixel_values = batch['pixel_values'].to(device)
+        labels = batch['labels'].to(device)
+        logits = self(pixel_values).to(device)
 
         criterion = nn.CrossEntropyLoss(weight=weights)
         loss = criterion(logits, labels)
@@ -95,7 +108,7 @@ class ViTLightningModule(pl.LightningModule):
         return loss, accuracy
 
     def training_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._train_dataloader.dataset.weights.values())).to(device))
+        loss, accuracy = self.common_step(batch, batch_idx, weights=self.training_weights)
         # logs metrics for each training_step,
         # and the average across the epoch
         self.log("training_loss", loss)
@@ -104,21 +117,21 @@ class ViTLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._val_dataloader.dataset.weights.values())).to(device))
+        loss, accuracy = self.common_step(batch, batch_idx, weights=self.validation_weights)
         self.log("validation_loss", loss, on_epoch=True)
         self.log("validation_accuracy", accuracy, on_epoch=True)
 
         return loss
 
     def test_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx, weights=torch.tensor(list(self._test_dataloader.dataset.weights.values())).to(device))
+        loss, accuracy = self.common_step(batch, batch_idx)
 
         return loss
 
     def configure_optimizers(self):
         # We could make the optimizer more fancy by adding a scheduler and specifying which parameters do
         # not require weight_decay but just using AdamW out-of-the-box works fine
-        return AdamW(self.parameters(), lr=5e-5)
+        return AdamW(self.parameters(), lr=1e-3)
 
     def train_dataloader(self):
         return self._train_dataloader
