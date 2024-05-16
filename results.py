@@ -1,5 +1,5 @@
 import os
-
+from PIL import Image
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -97,11 +97,11 @@ def plot_roc_curve(labels, scores, abnormal_labels, title="", path: str = "", da
     plt.ylabel("True Positive Rate")
     plt.title(title)
     plt.tight_layout()
-
+    eer_threshold, eer_threshold_idx = calculate_eer_threshold(fpr, tpr, thresholds)
     if plot_EER:
         plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dataset_name, new_labels, labels,
                                       abnormal_labels, bg_scores, logger, labels_to_classes_names)
-        eer_threshold, eer_threshold_idx = calculate_eer_threshold(fpr, tpr, thresholds)
+
 
     return auc, eer_threshold
 
@@ -279,3 +279,40 @@ def print_ood_id_outcomes(all_preds, labels, labels_to_classes_names, logger):
     for label, count in zip(ID_labels_unique, ID_labels_counts):
         id_rep+=f"Class {labels_to_classes_names[label.item()]} shown {count.item()} times \n"
     logger.info(id_rep)
+
+
+def show_50_outliers():
+    # Path to the folder containing the images
+    folder_path = "./50_highest_scores_patches"
+
+    # Get a list of all image files in the folder
+    image_files = [f for f in os.listdir(folder_path) if f.endswith('.jpg')]
+
+    # Define the number of images to display per row and column
+    num_images_per_row = 10
+    num_images_per_col = 5
+
+    # Create a new figure
+    fig, axs = plt.subplots(num_images_per_col, num_images_per_row, figsize=(16, 8))
+
+    # Loop through the images and display them on the plot
+    for i, file in enumerate(image_files):
+        # Calculate the position of the image in the grid
+        row = i // num_images_per_row
+        col = i % num_images_per_row
+
+        # Load the image using PIL
+        img = Image.open(os.path.join(folder_path, file))
+
+        # Display the image on the plot
+        axs[row, col].imshow(img)
+        axs[row, col].axis('off')
+
+        # Set the title of the image as its name
+        axs[row, col].set_title(file[:file.find("_")], fontsize=8)
+
+    # Adjust spacing between subplots
+    plt.subplots_adjust(wspace=0.3, hspace=0.5)
+
+    # Show the plot
+    plt.show()

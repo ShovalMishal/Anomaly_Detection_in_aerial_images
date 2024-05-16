@@ -4,7 +4,8 @@ import pickle
 import torch
 import numpy as np
 from enum import Enum
-
+import torch.nn.functional as F
+from matplotlib import pyplot as plt
 from torch.autograd import Variable
 import torch.nn as nn
 from tqdm import tqdm
@@ -190,86 +191,106 @@ def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
     bg_scores_filtered = all_scores[bg_indices]
     lowest_k_bg_indices = torch.argsort(bg_scores_filtered)[:k]
     lowest_k_bg_indices_original = bg_indices[lowest_k_bg_indices]
-    lowest_k_bg_indices_original_sorted = torch.sort(lowest_k_bg_indices_original).values
-    i=0
-    for batch_ind, batch in tqdm(enumerate(dataloader)):
-        while i<k and batch_ind == lowest_k_bg_indices_original_sorted[i]//dataloader.batch_size:
-            # save outlier image
-            image = batch['pixel_values'][lowest_k_bg_indices_original_sorted[0].item() % dataloader.batch_size]
-            label = batch['labels'][lowest_k_bg_indices_original_sorted[0].item() % dataloader.batch_size]
-            unnormalized_image = unnormalize(image)
-            image_path = os.path.join(save_path, f"{labels_to_classes_names[label.item()]}_bg_outlier_num_{i+1}")
-            unnormalized_image.save(f"{image_path}.jpg")
-            i+=1
+    for i, sample_ind in tqdm(enumerate(lowest_k_bg_indices_original)):
+        # save outlier image
+        sample = dataloader.dataset.__getitem__(sample_ind)
+        image = sample['pixel_values']
+        label = sample['labels']
+        unnormalized_image = unnormalize(image)
+        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}")
+        unnormalized_image.save(f"{image_path}.jpg")
 
     # save the k lowest score samples
     save_path = os.path.join(outliers_path, f"{k}_lowest_scores_patches")
     os.makedirs(save_path, exist_ok=True)
     lowest_k_indices = torch.argsort(all_scores)[:k]
-    lowest_k_indices_sorted = torch.sort(lowest_k_indices).values
-    i=0
-    for batch_ind, batch in tqdm(enumerate(dataloader)):
-        while i<k and batch_ind == lowest_k_indices_sorted[i]//dataloader.batch_size:
-            # save outlier image
-            image = batch['pixel_values'][lowest_k_indices_sorted[0].item() % dataloader.batch_size]
-            label = batch['labels'][lowest_k_indices_sorted[0].item() % dataloader.batch_size]
-            unnormalized_image = unnormalize(image)
-            image_path = os.path.join(save_path, f"{labels_to_classes_names[label.item()]}_outlier_num_{i+1}")
-            unnormalized_image.save(f"{image_path}.jpg")
-            i+=1
+    for i, sample_ind in tqdm(enumerate(lowest_k_indices)):
+        # save outlier image
+        sample = dataloader.dataset.__getitem__(sample_ind)
+        image = sample['pixel_values']
+        label = sample['labels']
+        unnormalized_image = unnormalize(image)
+        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}")
+        unnormalized_image.save(f"{image_path}.jpg")
 
     # save the k highest score samples
     save_path = os.path.join(outliers_path, f"{k}_highest_scores_patches")
     os.makedirs(save_path, exist_ok=True)
     highest_k_indices = torch.argsort(all_scores, descending=True)[:k]
-    highest_k_indices_sorted = torch.sort(highest_k_indices).values
-    i=0
-    for batch_ind, batch in tqdm(enumerate(dataloader)):
-        while i<k and batch_ind == highest_k_indices_sorted[i]//dataloader.batch_size:
-            # save outlier image
-            image = batch['pixel_values'][highest_k_indices_sorted[0].item() % dataloader.batch_size]
-            label = batch['labels'][highest_k_indices_sorted[0].item() % dataloader.batch_size]
-            unnormalized_image = unnormalize(image)
-            image_path = os.path.join(save_path, f"{labels_to_classes_names[label.item()]}_outlier_num_{i+1}")
-            unnormalized_image.save(f"{image_path}.jpg")
-            i+=1
+    for i, sample_ind in tqdm(enumerate(highest_k_indices)):
+        # save outlier image
+        sample = dataloader.dataset.__getitem__(sample_ind)
+        image = sample['pixel_values']
+        label = sample['labels']
+        unnormalized_image = unnormalize(image)
+        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}")
+        unnormalized_image.save(f"{image_path}.jpg")
 
     # save the k highest scored background samples
     save_path = os.path.join(outliers_path, f"{k}_highest_bg_scores_patches")
     os.makedirs(save_path, exist_ok=True)
     highest_k_bg_indices = torch.argsort(bg_scores_filtered, descending=True)[:k]
     highest_k_bg_indices_original = bg_indices[highest_k_bg_indices]
-    highest_k_bg_indices_original_sorted = torch.sort(highest_k_bg_indices_original).values
-    i=0
-    for batch_ind, batch in tqdm(enumerate(dataloader)):
-        while i<k and batch_ind == highest_k_bg_indices_original_sorted[i]//dataloader.batch_size:
-            # save outlier image
-            image = batch['pixel_values'][highest_k_bg_indices_original_sorted[0].item() % dataloader.batch_size]
-            label = batch['labels'][highest_k_bg_indices_original_sorted[0].item() % dataloader.batch_size]
-            unnormalized_image = unnormalize(image)
-            image_path = os.path.join(save_path, f"{labels_to_classes_names[label.item()]}_bg_outlier_num_{i+1}")
-            unnormalized_image.save(f"{image_path}.jpg")
-            i+=1
+    for i, sample_ind in tqdm(enumerate(highest_k_bg_indices_original)):
+        # save outlier image
+        sample = dataloader.dataset.__getitem__(sample_ind)
+        image = sample['pixel_values']
+        label = sample['labels']
+        unnormalized_image = unnormalize(image)
+        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}")
+        unnormalized_image.save(f"{image_path}.jpg")
 
 
-def rank_samples_accord_features(scores, labels, eer_threshold, model, dataloader):
-    ood_tagged_scores = scores[scores >= eer_threshold]
-    ood_tagged_indices = np.where(scores >= eer_threshold)[0]
-    highest_score_sample_index = torch.argsort(ood_tagged_scores)[-1]
-    highest_score_sample_index_in_dataloader = ood_tagged_indices[highest_score_sample_index]
+def rank_samples_accord_features(scores, ood_labels, eer_threshold, model, dataloader, path, logger):
+    logger.info("Ranking samples according features\n")
+    cache_path = os.path.join(path, "ood_tagged_samples_features_and_labels.pkl")
+    if not os.path.exists(cache_path):
+        scores = -scores
+        ood_tagged_scores = scores[scores >= eer_threshold]
+        ood_tagged_indices = np.where(scores >= eer_threshold)[0]
+        ood_tagged_indices_sorted = torch.argsort(ood_tagged_scores)
+        # highest_score_sample_index = torch.argsort(ood_tagged_scores)[-1]
+        # highest_score_sample_index_in_dataloader = ood_tagged_indices[highest_score_sample_index]
+        ood_tagged_indices_sorted_in_dataloader = ood_tagged_indices[ood_tagged_indices_sorted]
+        ood_tagged_labels = []
+        ood_tagged_features = []
+        for i, sample_ind in tqdm(enumerate(ood_tagged_indices_sorted_in_dataloader)):
+            sample = dataloader.dataset.__getitem__(sample_ind)
+            image = sample['pixel_values']
+            label = sample['labels']
+            with torch.no_grad():
+                features = model.pen_ultimate_layer(x=image.unsqueeze(dim=0).to(device)).cpu()
+                ood_tagged_features.append(features)
+            ood_tagged_labels.append(label)
+        ood_tagged_features = torch.cat(ood_tagged_features, dim=0)
+        with open(cache_path, 'wb') as f:
+            pickle.dump((ood_tagged_features, ood_tagged_labels), f)
+    else:
+        with open(cache_path, 'rb') as f:
+            ood_tagged_features, ood_tagged_labels = pickle.load(f)
 
-    for batch_ind, batch in tqdm(enumerate(dataloader)):
-        if batch_ind == highest_score_sample_index_in_dataloader // dataloader.batch_size:
-            image = batch['pixel_values'][highest_score_sample_index_in_dataloader % dataloader.batch_size]
-            label = batch['labels'][highest_score_sample_index_in_dataloader % dataloader.batch_size]
-        with torch.no_grad():
-            features = model.pen_ultimate_layer(x=image)
+    is_ood_sample = np.array([label in ood_labels for label in ood_tagged_labels])
+    is_ood_sample_indices = np.where(is_ood_sample)[0]
+    highest_score_ood_sample_index = is_ood_sample_indices[-1]
+    highest_score_ood_sample_features = ood_tagged_features[highest_score_ood_sample_index, :]
+    distances = torch.norm(ood_tagged_features-highest_score_ood_sample_features, dim=1) # euclidean distance
+    # distances = F.cosine_similarity(ood_tagged_features, highest_score_ood_sample_features.unsqueeze(0), dim=1) # cosine similarity
 
 
+    ood_high_thresh_distance_scores = distances[[label in ood_labels for label in ood_tagged_labels]]
+    sorted_ood_high_thresh_distance_scores, ood_high_thresh_distance_scores_indices = torch.sort(ood_high_thresh_distance_scores)
 
-
-
-
-
-
+    sorted_high_thresh_distance_scores, sorted_high_thresh_distance_scores_indices = torch.sort(distances)
+    ood_ranks_in_sorted_high_thresh_distance_scores = torch.searchsorted(sorted_high_thresh_distance_scores, sorted_ood_high_thresh_distance_scores)
+    logger.info("The OOD ranks are:\n")
+    logger.info(f"{ood_ranks_in_sorted_high_thresh_distance_scores}")
+    plt.figure()
+    plt.plot(list(range(len(ood_ranks_in_sorted_high_thresh_distance_scores))), torch.sort(ood_ranks_in_sorted_high_thresh_distance_scores)[0])
+    plt.xlabel('OOD distance from first ood sample rank')
+    plt.ylabel('distance from first ood sample rank')
+    plt.title('OOD distance from first ood sample rank')
+    plt.yscale('log')
+    # plt.xscale('log')
+    plt.grid(True)
+    plt.savefig(path + f"/OOD_cs_distance_from_first_ood_sample_rank.png")
 

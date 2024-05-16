@@ -93,7 +93,8 @@ class FullODDPipeline:
                     plot_EER=True, bg_scores=bg_scores, logger=self.logger)
 
         if self.OOD_detector_cfg.rank_accord_features:
-            rank_samples_accord_features(scores, labels, eer_threshold, model, test_dataloader)
+            rank_samples_accord_features(scores, list(test_dataloader.dataset.ood_classes.values()),
+                                         eer_threshold, model, test_dataloader, self.OOD_detector.test_output, self.logger)
 
 
 

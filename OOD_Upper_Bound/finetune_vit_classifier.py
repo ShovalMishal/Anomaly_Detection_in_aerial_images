@@ -94,6 +94,10 @@ class ViTLightningModule(pl.LightningModule):
         outputs = self.vit(pixel_values=pixel_values)
         return outputs.logits
 
+    def pen_ultimate_layer(self, x):
+        outputs = self.vit(pixel_values=x)
+        return outputs.last_hidden_state
+
     def common_step(self, batch, batch_idx, weights=None):
         pixel_values = batch['pixel_values'].to(device)
         labels = batch['labels'].to(device)
