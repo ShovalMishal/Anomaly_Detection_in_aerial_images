@@ -4,13 +4,13 @@ import pickle
 import torch
 import numpy as np
 from enum import Enum
-import torch.nn.functional as F
+
 from matplotlib import pyplot as plt
 from torch.autograd import Variable
 import torch.nn as nn
 from tqdm import tqdm
 import torchvision.transforms as transforms
-from PIL import Image
+
 
 DEFAULT_ODIN_TEMP = 1000
 DEFAULT_ODIN_NOISE_MAGNITUDE = 1e-3

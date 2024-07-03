@@ -179,7 +179,8 @@ class ResNet18Classifier(Classifier):
                                logger=self.logger,
                                resume=self.classifier_cfg.resume,
                                max_epoch=self.classifier_cfg.max_epoch,
-                               milestones=self.classifier_cfg.milestones)
+                               milestones=self.classifier_cfg.milestones,
+                               loss_class_weights=self.classifier_cfg.loss_class_weights)
 
     def get_fine_tuned_model(self):
         args = SimpleNamespace()
@@ -245,7 +246,8 @@ class VitClassifier(Classifier):
                                         id2label=self.id2label,
                                         label2id=self.label2id, num_labels=len(self.id2label),
                                         model_path=self.classifier_cfg.model_path,
-                                        loss_class_weights=self.classifier_cfg.loss_class_weights, logger=self.logger)
+                                        loss_class_weights=self.classifier_cfg.loss_class_weights, logger=self.logger,
+                                        max_epochs=self.classifier_cfg.max_epoch)
 
         self.model = self.model.to(device)
 
@@ -254,8 +256,8 @@ class VitClassifier(Classifier):
         early_stop_callback = EarlyStopping(
             monitor='validation_loss',
             patience=3,
-            strict=False,
-            verbose=False,
+            strict=True,
+            verbose=True,
             mode='min'
         )
         checkpoint_callback = ModelCheckpoint(
@@ -267,13 +269,15 @@ class VitClassifier(Classifier):
         )
 
         logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
-        trainer = Trainer(num_nodes=1, callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
+        trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
+                          callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
         ckpt_path = 'best' if self.classifier_cfg.resume else None
         trainer.fit(self.model, ckpt_path=ckpt_path)
 
         """Finally, let's test the trained model on the test set:"""
 
-        trainer.test()
+        results = trainer.test()
+        print(results)
 
     def get_fine_tuned_model(self):
         model = ViTLightningModule.load_from_checkpoint(

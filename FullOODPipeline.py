@@ -34,7 +34,7 @@ class FullODDPipeline:
                                                  f"{self.classifier_cfg.type}_full_ood_pipeline_log.log"))
         self.anomaly_detector = {'vit_based_anomaly_detector': VitBasedAnomalyDetector}[anomaly_detector_cfg.type]
         self.anomaly_detector = self.anomaly_detector(anomaly_detector_cfg,
-                                                      self.output_dir, self.logger)
+                                                      self.output_dir, self.logger, self.current_run_name)
         self.classifier = {'vit': VitClassifier, 'resnet18': ResNet18Classifier}[self.classifier_cfg.type]
         self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger, self.current_run_name)
         self.OOD_detector = {'ODIN': ODINOODDetector}[self.OOD_detector_cfg.type]

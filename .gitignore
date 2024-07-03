@@ -9,3 +9,5 @@ results
 checkpoints
 lightning_logs
 old_results
+results_for_paper/figures_for_paper/**
+temp_results

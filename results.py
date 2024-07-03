@@ -215,6 +215,15 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     sorted_high_thresh_odin_scores, sorted_high_thresh_odin_scores_indices = torch.sort(high_thresh_odin_scores)
     ood_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, sorted_ood_high_thresh_odin_scores)
 
+    # find how well OOD samples are ranked in the ODIN scores - per class
+    for OOD_label in abnormal_labels:
+        if OOD_label not in high_thresh_labels:
+            continue
+        curr_label_ood_high_thresh_odin_scores = high_thresh_odin_scores[high_thresh_labels == OOD_label]
+        curr_label_sorted_ood_high_thresh_odin_scores, curr_label_ood_high_thresh_odin_scores_indices = torch.sort(curr_label_ood_high_thresh_odin_scores)
+        curr_ood_label_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, curr_label_sorted_ood_high_thresh_odin_scores)
+        logger.info(f"OOD label {labels_to_classes_names[OOD_label]} first rank in ODIN scores: {torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_odin_scores)[0][0]}")
+
     plt.figure()
     plt.plot(list(range(len(ood_ranks_in_sorted_high_thresh_odin_scores))), torch.sort(ood_ranks_in_sorted_high_thresh_odin_scores)[0])
     plt.xlabel('OOD rank in ODIN scores, after stage 2')

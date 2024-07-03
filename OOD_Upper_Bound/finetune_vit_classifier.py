@@ -17,7 +17,7 @@ We will perform data augmentaton **on-the-fly** using HuggingFace Datasets' `set
 We first load the image processor, which is a minimal object that can be used to prepare images for inference. We use some of its properties which are relevant for preparing images for the model.
 """
 
-from transformers import ViTImageProcessor, ViTConfig
+from transformers import ViTImageProcessor, get_linear_schedule_with_warmup
 
 """For data augmentation, one can use any available library. Here we'll use torchvision's [transforms module](https://pytorch.org/vision/stable/transforms.html)."""
 
@@ -60,7 +60,7 @@ import torch.nn as nn
 
 class ViTLightningModule(pl.LightningModule):
     def __init__(self, train_dataloader, val_dataloader, test_dataloader, id2label, label2id, model_path="",
-                 loss_class_weights=False, num_labels=10, logger=None):
+                 loss_class_weights=False, num_labels=10, logger=None, max_epochs=15):
         super(ViTLightningModule, self).__init__()
         self._train_dataloader = train_dataloader
         self._val_dataloader = val_dataloader
@@ -75,19 +75,11 @@ class ViTLightningModule(pl.LightningModule):
                                                              num_labels=num_labels,
                                                              id2label=id2label,
                                                              label2id=label2id)
-        # else:
-        #     config = ViTConfig(
-        #         image_size=32,
-        #         patch_size=8,
-        #         num_hidden_layers=12,
-        #         num_attention_heads=12,
-        #         hidden_size=768,
-        #         num_labels=num_labels,
-        #         id2label=id2label,
-        #         label2id=label2id,
-        #     )
-        #     self.vit = ViTForImageClassification(config)
+
         self.vit = self.vit.to(device)
+        self.num_training_steps = len(self._train_dataloader) * max_epochs
+
+        self.num_warmup_steps = self.num_training_steps // 10
 
 
     def forward(self, pixel_values):
@@ -133,9 +125,24 @@ class ViTLightningModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), lr=1e-4, weight_decay=0.01)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=self.num_warmup_steps,
+            num_training_steps=self.num_training_steps
+        )
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'step',  # Called after every batch
+                'frequency': 1
+            }
+        }
+
         # We could make the optimizer more fancy by adding a scheduler and specifying which parameters do
         # not require weight_decay but just using AdamW out-of-the-box works fine
-        return AdamW(self.parameters(), lr=1e-3)
+        # return AdamW(self.parameters(), lr=1e-3)
 
     def train_dataloader(self):
         return self._train_dataloader
