@@ -221,7 +221,7 @@ anomaly_detector_cfg = dict(
                         type='mmdet.PackDetInputs',
                         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape', 'scale_factor'))
                 ])),
-        train_cfg=dict(type='EpochBasedTrainLoop', max_epochs=12, val_interval=1),
+        train_cfg=dict(type='EpochBasedTrainLoop', max_epochs=15, val_interval=1),
         val_cfg=dict(type='ValLoop'),
         test_cfg=dict(type='TestLoop'),
         default_scope='mmrotate',
@@ -236,7 +236,7 @@ anomaly_detector_cfg = dict(
                 type="EarlyStoppingHook",
                 monitor="dota/recall",
                 strict=True,
-                patience=3,
+                patience=5,
                 rule='greater')
         ),
         param_scheduler = [
@@ -249,9 +249,9 @@ anomaly_detector_cfg = dict(
             dict(
                 type='MultiStepLR',
                 begin=0,
-                end=12,
+                end=15,
                 by_epoch=True,
-                milestones=[8, 11],
+                milestones=[11, 14],
                 gamma=0.1)
         ],
         # optim_wrapper=dict(
@@ -298,7 +298,7 @@ anomaly_detector_cfg = dict(
                 in_channels=768,
                 fc_out_channels=1024,
                 roi_feat_size=7,
-                num_classes=2,
+                num_classes=1,
                 reg_predictor_cfg=dict(type='mmdet.Linear'),
                 cls_predictor_cfg=dict(type='mmdet.Linear'),
                 bbox_coder=dict(

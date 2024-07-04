@@ -13,7 +13,9 @@ from ImagePyramidPatchesDataset import ImagePyramidPatchesDataset
 from mmengine.runner import Runner
 import copy
 from PIL import Image
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def create_logger(path):
     if os.path.exists(path):
@@ -30,6 +32,7 @@ def create_logger(path):
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     return logger
+
 
 def remove_empty_folders(path, logger):
     for root, dirs, files in os.walk(path, topdown=False):
@@ -75,12 +78,12 @@ def is_valid_file_wrapper(path_to_exclusion_file):
 
     return is_valid_file
 
+
 def create_dataloader(dataloader_cfg):
     dataloader_cfg = copy.deepcopy(dataloader_cfg)
     dataloader_cfg["dataset"]["_scope_"] = "mmrotate"
     data_loader = Runner.build_dataloader(dataloader_cfg, seed=123456)
     return data_loader
-
 
 
 def create_patches_dataset(type, dataset_cfg, transform, output_dir, logger, is_valid_file_use=False, ood_remove=False):
@@ -104,7 +107,8 @@ def create_patches_dataset(type, dataset_cfg, transform, output_dir, logger, is_
     if is_valid_file_use:
         is_valid_file = is_valid_file_wrapper(inclusion_file_path)
     patches_dataset = ImagePyramidPatchesDataset(root_dir=dataset_images_path, inclusion_file_path=inclusion_file_path,
-                                                 dataset_type=type, output_dir=output_dir, logger=logger, transform=transform,
+                                                 dataset_type=type, output_dir=output_dir, logger=logger,
+                                                 transform=transform,
                                                  is_valid_file=is_valid_file, ood_classes_names=dataset_cfg.ood_classes)
     return patches_dataset
 
@@ -117,7 +121,6 @@ def calculate_confusion_matrix(dataloader, model, logger, dataset_name="", path=
         # Generate the confusion matrix
     create_and_save_confusion_matrix(path=path, dataset_name=dataset_name, logger=logger, all_preds=all_preds,
                                      all_labels=all_labels)
-
 
 
 def eval_model(dataloader, model, cache_dir=""):
@@ -134,7 +137,7 @@ def eval_model(dataloader, model, cache_dir=""):
         curr_cache_index = batch_ind // 1000
         file_related_path = os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl')
         if os.path.exists(file_related_path):
-            next_cache_index = curr_cache_index+1
+            next_cache_index = curr_cache_index + 1
             del batch
             continue
 
@@ -236,6 +239,7 @@ def plot_outliers_images():
     plt.subplots_adjust(wspace=0.3, hspace=1)
     # Show the plot
     plt.savefig(os.path.dirname(folder_path) + "/50_highest_scores_patches.jpg")
+
 
 if __name__ == '__main__':
     plot_outliers_images()

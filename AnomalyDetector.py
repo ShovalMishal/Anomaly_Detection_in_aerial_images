@@ -94,6 +94,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.anomaly_detector_cfg.bbox_regressor.train_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.anomaly_detector_cfg.bbox_regressor.val_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.anomaly_detector_cfg.bbox_regressor.test_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
+        self.anomaly_detector_cfg.bbox_regressor.train_dataloader.dataset.filter_cfg = dict(filter_empty_gt=True)
         self.bbox_regressor_runner = Runner.from_cfg(self.anomaly_detector_cfg.bbox_regressor)
         self.bbox_regressor_runner.model.initialize(logger=self.logger,
                                                     vit_patch_size=self.anomaly_detector_cfg.vit_patch_size,
@@ -118,7 +119,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         train_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.train_dataloader)
         val_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.val_dataloader)
         test_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.test_dataloader)
-        for dataloader in [train_dataloader, val_dataloader, test_dataloader]:
+        for dataloader, target_dir in zip([train_dataloader, val_dataloader, test_dataloader],
+        [self.train_target_dir, self.val_target_dir, self.test_target_dir]):
             for batch in tqdm(dataloader):
                 for input, data_sample in zip(batch['inputs'], batch['data_samples']):
                     save_path = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
@@ -131,7 +133,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                              patch_size=self.proposals_sizes['square'],
                                                                              plot=False,
                                                                              threshold_percentage=
-                                                                             self.patches_filtering_threshold)
+                                                                             self.patches_filtering_threshold,
+                                                                             target_dir=target_dir)
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
                     try:
@@ -155,18 +158,20 @@ class VitBasedAnomalyDetector(AnomalyDetector):
     def run(self):
         self.logger.info(f"Running anomaly detection stage\n")
         if not self.skip_stage:
-            train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
-            os.makedirs(train_target_dir, exist_ok=True)
-            val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
-            os.makedirs(val_target_dir, exist_ok=True)
-            test_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "test_dataset")
-            os.makedirs(test_target_dir, exist_ok=True)
+            self.train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
+            os.makedirs(self.train_target_dir, exist_ok=True)
+            self.val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
+            os.makedirs(self.val_target_dir, exist_ok=True)
+            self.test_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "test_dataset")
+            os.makedirs(self.test_target_dir, exist_ok=True)
             self.logger.info(f"Anomaly detection - boxes regressor\n")
             if self.to_extract_patches:
                 self.extract_patches()
+
             self.create_bbox_regressor_runner()
             self.bbox_regressor_runner.train()
             # self.test_with_and_without_regressor()
+
             self.initiate_dataloaders()
             self.logger.info(f"Anomaly detection - train dataset\n")
             self.bbox_regressor_runner.visualizer.dataset_meta = self.train_dataloader.dataset.METAINFO
@@ -184,7 +189,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 labels_names=self.classes_names,
                                                                 logger=self.logger,
                                                                 plot=False,
-                                                                target_dir=train_target_dir,
+                                                                target_dir=self.train_target_dir,
                                                                 extract_bbox_path=self.output_dir_train_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer)
             self.logger.info(f"Anomaly detection - val dataset\n")
@@ -202,7 +207,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 labels_names=self.classes_names,
                                                                 logger=self.logger,
                                                                 plot=False,
-                                                                target_dir=val_target_dir,
+                                                                target_dir=self.val_target_dir,
                                                                 extract_bbox_path=self.output_dir_val_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer,
                                                                 train=False, val=True)
@@ -222,7 +227,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 labels_names=self.classes_names,
                                                                 logger=self.logger,
                                                                 plot=False,
-                                                                target_dir=test_target_dir,
+                                                                target_dir=self.test_target_dir,
                                                                 extract_bbox_path=self.output_dir_test_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer,
                                                                 train=False)
