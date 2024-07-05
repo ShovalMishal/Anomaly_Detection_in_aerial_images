@@ -24,8 +24,8 @@
     116,
     124
   ],
-  "save_dir": "/home/shoval/Documents/Repositories/data/gsd_025_normalized_dataset_rotated/train/",
+  "save_dir": "/home/shoval/Documents/Repositories/data/gsd_02_normalized_dataset_rotated/train/",
   "save_ext": ".png",
-  "target_gsd": 0.25,
+  "target_gsd": 0.2,
   "normalize_gsd": true
 }

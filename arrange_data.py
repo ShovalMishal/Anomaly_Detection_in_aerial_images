@@ -8,7 +8,7 @@ import statistics
 import numpy as np
 from matplotlib import pyplot as plt
 from collections import Counter
-
+from mmengine.config import Config
 import argparse
 
 from DOTA_devkit.DOTA import DOTA
@@ -115,9 +115,8 @@ def copy_data_and_sample_from_val_background():
 
 
 
-def compare_datasets(rotated=True):
-    global train_dataloader, val_dataloader, test_dataloader
-    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/dataset_represantion.txt"
+def calculate_dataset_representation(train_dataloader, val_dataloader, test_dataloader):
+    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/dataset_representation.txt"
     with open(save_path, 'w') as f:
         # Redirect standard output to the file
         sys.stdout = f
@@ -168,11 +167,10 @@ def copy_files_according_to_horizontal_dataset():
     print(f"{i} files were copied")
 
 
-def calculate_area_size_statistics_for_each_class():
-    global train_dataloader, val_dataloader, test_dataloader
-    pixel_to_meter_factor = 16
-    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/area_size_statistics.json"
-    sizes_file_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/classes_sizes.txt"
+def calculate_area_size_statistics_for_each_class(train_dataloader, val_dataloader, test_dataloader):
+    pixel_to_meter_squared_factor = 4
+    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/area_size_statistics.json"
+    sizes_file_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/classes_sizes.txt"
     train_dataloader = create_dataloader(train_dataloader)
     val_dataloader = create_dataloader(val_dataloader)
     test_dataloader = create_dataloader(test_dataloader)
@@ -181,17 +179,17 @@ def calculate_area_size_statistics_for_each_class():
         for i in range(len(train_dataloader.dataset)):
             for area, label in zip(train_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    train_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_factor)
+                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
 
         for i in range(len(val_dataloader.dataset)):
             for area, label in zip(val_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    val_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_factor)
+                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
 
         for i in range(len(test_dataloader.dataset)):
             for area, label in zip(test_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    test_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_factor)
+                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
 
         with open(save_path, 'w') as file:
             json.dump(areas_dict, file, indent=4)
@@ -201,14 +199,18 @@ def calculate_area_size_statistics_for_each_class():
 
     means = []
     stds = []
+    medians = []
     with open(sizes_file_path, 'w') as file:
         for label, areas in areas_dict.items():
+            median = statistics.median(areas)
+            medians.append(median)
             mean = statistics.mean(areas)
             means.append(mean)
             std = np.std(areas)
             stds.append(std)
             print(f"Class {train_dataloader.dataset.METAINFO['classes'][int(label)]}: mean area size: {mean}", file=file)
             print(f"Class {train_dataloader.dataset.METAINFO['classes'][int(label)]}: std dev area size: {std}", file=file)
+            print(f"Class {train_dataloader.dataset.METAINFO['classes'][int(label)]}: median area size: {median}", file=file)
 
     class_names = [train_dataloader.dataset.METAINFO['classes'][int(label)] for label in areas_dict.keys()]
     plt.figure(figsize=(10, 10))
@@ -221,7 +223,7 @@ def calculate_area_size_statistics_for_each_class():
     plt.grid(True, linestyle='--')
     plt.tight_layout()
     plt.savefig(
-        "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/box_plot_statistics.png")
+        "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/box_plot_statistics.png")
 
 
     plt.clf()
@@ -235,7 +237,7 @@ def calculate_area_size_statistics_for_each_class():
     plt.title('Area size statistics for each class')
     plt.tight_layout()
     # Show the plot
-    plt.savefig("/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/area_size_statistics.png")
+    plt.savefig("/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/area_size_statistics.png")
 
     plt.clf()
     plt.figure(figsize=(10, 10))
@@ -246,14 +248,26 @@ def calculate_area_size_statistics_for_each_class():
     plt.tight_layout()
     plt.xticks(list(range(len(means))), class_names, rotation=90)
     plt.title('Average area size statistics for each class')
-    plt.savefig("/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/average_area_size_statistics.png")
+    plt.savefig("/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/average_area_size_statistics.png")
 
-def calculate_data_statistics():
-    calculate_area_size_statistics_for_each_class()
-    print("rotated dataset representation\n")
-    compare_datasets(rotated=True)
-    print("regular dataset representation\n")
-    compare_datasets(rotated=False)
+    plt.clf()
+    plt.figure(figsize=(10, 10))
+    plt.scatter(list(range(len(medians))), medians)
+    plt.xlabel('Classes')
+    plt.ylabel('Area meidans [meters^2]')
+    plt.yscale('log')
+    plt.tight_layout()
+    plt.xticks(list(range(len(medians))), class_names, rotation=90)
+    plt.title('Median area size statistics for each class')
+    plt.savefig(
+        "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/median_area_size_statistics.png")
+
+
+
+def calculate_data_statistics(train_dataloader, val_dataloader, test_dataloader):
+    calculate_area_size_statistics_for_each_class(train_dataloader, val_dataloader, test_dataloader)
+    print("Dataset representation\n")
+    calculate_dataset_representation(train_dataloader, val_dataloader, test_dataloader)
 
 def main():
     parser = argparse.ArgumentParser(description='Split train dataset to train and val datasets')
@@ -266,4 +280,8 @@ def main():
 
 if __name__ == '__main__':
     main()
-
+    # cfg = Config.fromfile("./configs/experiment_2/config.py")
+    # anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
+    # calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
+    #                           val_dataloader=anomaly_detector_cfg.val_dataloader,
+    #                           test_dataloader=anomaly_detector_cfg.test_dataloader)
