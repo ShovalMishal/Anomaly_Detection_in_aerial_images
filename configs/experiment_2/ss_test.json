@@ -24,7 +24,7 @@
     116,
     124
   ],
-  "save_dir": "/home/shoval/Documents/Repositories/data/gsd_04_normalized_dataset_rotated/test/",
+  "save_dir": "/home/shoval/Documents/Repositories/data/gsd_04_normalized_dataset_rotated/test",
   "save_ext": ".png",
   "target_gsd": 0.4,
   "normalize_gsd": true

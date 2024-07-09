@@ -1,4 +1,4 @@
-
+import json
 import os
 
 import cv2
@@ -57,7 +57,9 @@ class AnomalyDetector:
         self.output_dir_train_dataset = os.path.join(self.data_output_dir, "train")
         self.output_dir_val_dataset = os.path.join(self.data_output_dir, "val")
         self.output_dir_test_dataset = os.path.join(self.data_output_dir, "test")
+        self.hashmap_locations_test_file = os.path.join(self.output_dir_test_dataset, "hash_map_locations_test_dataset.json")
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
+        self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
 
     def run(self):
         pass
@@ -134,7 +136,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                              plot=False,
                                                                              threshold_percentage=
                                                                              self.patches_filtering_threshold,
-                                                                             target_dir=target_dir)
+                                                                             target_dir=target_dir,
+                                                                             image_path=data_sample.img_path)
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
                     try:
@@ -157,22 +160,22 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
     def run(self):
         self.logger.info(f"Running anomaly detection stage\n")
+        self.train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
+        os.makedirs(self.train_target_dir, exist_ok=True)
+        self.val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
+        os.makedirs(self.val_target_dir, exist_ok=True)
+        self.test_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "test_dataset")
+        os.makedirs(self.test_target_dir, exist_ok=True)
+        self.logger.info(f"Anomaly detection - boxes regressor\n")
+        if self.to_extract_patches:
+            self.extract_patches()
+
+        self.create_bbox_regressor_runner()
+        self.bbox_regressor_runner.train()
+        # self.test_with_and_without_regressor()
+
+        self.initiate_dataloaders()
         if not self.skip_stage:
-            self.train_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "train_dataset")
-            os.makedirs(self.train_target_dir, exist_ok=True)
-            self.val_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "val_dataset")
-            os.makedirs(self.val_target_dir, exist_ok=True)
-            self.test_target_dir = os.path.join(self.dino_vit_bg_subtractor.target_dir, "test_dataset")
-            os.makedirs(self.test_target_dir, exist_ok=True)
-            self.logger.info(f"Anomaly detection - boxes regressor\n")
-            if self.to_extract_patches:
-                self.extract_patches()
-
-            self.create_bbox_regressor_runner()
-            self.bbox_regressor_runner.train()
-            # self.test_with_and_without_regressor()
-
-            self.initiate_dataloaders()
             self.logger.info(f"Anomaly detection - train dataset\n")
             self.bbox_regressor_runner.visualizer.dataset_meta = self.train_dataloader.dataset.METAINFO
             for batch in tqdm(self.train_dataloader):
@@ -213,6 +216,10 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 train=False, val=True)
 
             self.logger.info(f"Anomaly detection - test dataset\n")
+            # saving test bounding boxes locations
+            if os.path.exists(self.hashmap_locations_test_file):
+                os.remove(self.hashmap_locations_test_file)
+            hashmap_locations_test = {}
             for batch in tqdm(self.test_dataloader):
                 for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                     # iterate per image to save all patches
@@ -230,9 +237,14 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 target_dir=self.test_target_dir,
                                                                 extract_bbox_path=self.output_dir_test_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer,
-                                                                train=False)
-
+                                                                train=False,
+                                                                hashmap_locations=hashmap_locations_test)
+            with open(self.hashmap_locations_test_file, 'w') as f:
+                json.dump(hashmap_locations_test, f, indent=4)
+        if self.evaluate_stage:
+            self.test_with_and_without_regressor()
     def test_with_and_without_regressor(self):
+        self.logger.info(f"Anomaly detection - Evaluate regressor\n")
         self.bbox_regressor_runner.test()
         # test without regressor
         predicted_bbox = []

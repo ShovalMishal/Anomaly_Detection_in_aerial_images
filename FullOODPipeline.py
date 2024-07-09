@@ -31,7 +31,7 @@ class FullODDPipeline:
         self.classifier_cfg = self.cfg.get("classifier_cfg")
         self.OOD_detector_cfg = self.cfg.get("OOD_detector_cfg")
         self.logger = create_logger(os.path.join(self.output_dir,
-                                                 f"{self.classifier_cfg.type}_full_ood_pipeline_log.log"))
+                                                 f"{self.current_run_name}_full_ood_pipeline_log.log"))
         self.anomaly_detector = {'vit_based_anomaly_detector': VitBasedAnomalyDetector}[anomaly_detector_cfg.type]
         self.anomaly_detector = self.anomaly_detector(anomaly_detector_cfg,
                                                       self.output_dir, self.logger, self.current_run_name)

@@ -47,7 +47,7 @@ def plot_precision_recall_curve(labels, scores, abnormal_labels, title="", path:
         if "k" in title:
             plt.savefig(path + f"/{dataset_name}_dataset_k" + str(title[-1]) + "_precision_recall.png")
         else:
-            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_precision_recall.png")
+            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_precision_recall.pdf")
     # plt.show()
     return ap
 
@@ -154,20 +154,21 @@ def plot_confusion_matrix(confusion_matrix, classes, normalize=True, output_dir=
     if normalize:
         for idx in range(len(normalized_confusion_matrix)):
             normalized_confusion_matrix[idx, ...] = normalized_confusion_matrix[idx, ...] / normalized_confusion_matrix[idx, ...].sum()
-    title = " normalized " if normalize else " "
+    title = " Normalized " if normalize else " "
     file_name = "normalized_" if normalize else ""
     plt.figure()
-    plt.imshow(normalized_confusion_matrix)
+    plt.imshow(normalized_confusion_matrix, cmap='plasma')
     for i in range(confusion_matrix.shape[0]):
         for j in range(confusion_matrix.shape[1]):
-            plt.text(j, i, f'{confusion_matrix[i, j]}', ha='center', va='center', color='white')
+            color = "white" if i!=j else "black"
+            plt.text(j, i, f'{confusion_matrix[i, j]}', ha='center', va='center', color=color)
     plt.colorbar()
     plt.xticks(range(len(classes)), classes, rotation=90)
     plt.yticks(range(len(classes)), classes)
     plt.title(
-        f'confusion matrix{title}according to rows\naccuracy: {acc:.2f}[%]')
+        f'{title} Confusion Matrix \naccuracy: {acc:.2f}[%]')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"{file_name}training_confusion_matrix.png"))
+    plt.savefig(os.path.join(output_dir, f"{file_name}training_confusion_matrix.pdf"))
     # plt.show()
 
 def calculate_eer_threshold(fpr, tpr, thresholds):
@@ -186,7 +187,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
         if "k" in title:
             plt.savefig(path + f"/{dataset_name}_dataset_k" + str(title[-1]) + "_ROC.png")
         else:
-            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_ROC.png")
+            plt.savefig(path + f"/{dataset_name}_dataset_" + str(title) + "_ROC.pdf")
     # plt.show()
 
     # Plot Confusion matrix for the EER point
@@ -216,6 +217,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     ood_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, sorted_ood_high_thresh_odin_scores)
 
     # find how well OOD samples are ranked in the ODIN scores - per class
+    data={}
     for OOD_label in abnormal_labels:
         if OOD_label not in high_thresh_labels:
             continue
@@ -223,6 +225,20 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
         curr_label_sorted_ood_high_thresh_odin_scores, curr_label_ood_high_thresh_odin_scores_indices = torch.sort(curr_label_ood_high_thresh_odin_scores)
         curr_ood_label_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, curr_label_sorted_ood_high_thresh_odin_scores)
         logger.info(f"OOD label {labels_to_classes_names[OOD_label]} first rank in ODIN scores: {torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_odin_scores)[0][0]}")
+        data[labels_to_classes_names[OOD_label]] = torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_odin_scores)[0][0]
+    sorted_data = sorted(data.items(), key=lambda x: x[1])
+    classes_names, first_rank = zip(*sorted_data)
+
+    fig = plt.figure(figsize=(10, 5))
+    plt.bar(classes_names, first_rank, width=0.4)
+    plt.xlabel("novel classes")
+    plt.ylabel("TIme to first")
+    plt.title("Time to first (TT-1) for novel classes")
+    plt.grid(True)
+    plt.yscale('log')
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+    plt.savefig(path + f"/TT-1.pdf")
 
     plt.figure()
     plt.plot(list(range(len(ood_ranks_in_sorted_high_thresh_odin_scores))), torch.sort(ood_ranks_in_sorted_high_thresh_odin_scores)[0])
@@ -231,7 +247,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/EER_OOD_rank_in_ODIN_scores.png")
+    plt.savefig(path + f"/EER_OOD_rank_in_ODIN_scores.pdf")
     # plt.show()
 
     # OOD bg scores ranks plot
@@ -251,7 +267,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/EER_OOD_rank_in_BG_scores.png")
+    plt.savefig(path + f"/EER_OOD_rank_in_BG_scores.pdf")
     # plt.show()
 
     # ood odin scores ranks plot
@@ -268,7 +284,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/OOD_ranks_in_odin_scores.png")
+    plt.savefig(path + f"/OOD_ranks_in_odin_scores.pdf")
     # plt.show()
 
 

@@ -1,7 +1,7 @@
 """This config is originally from OpenMMLab: <link to github>"""
 runai_run = False
 output_dir = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/" if not runai_run else "/storage/shoval/Anomaly_Detection_in_aerial_images/results/"
-current_run_name = "experiment_1"
+current_run_name = "experiment_1_025"
 ood_class_names=['plane', 'baseball-diamond', 'bridge', 'ground-track-field',
                 'ship', 'tennis-court', 'basketball-court', 'storage-tank',
                 'soccer-ball-field', 'roundabout', 'harbor', 'swimming-pool',
@@ -116,8 +116,9 @@ anomaly_detector_cfg = dict(
                     meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape', 'scale_factor'))
             ])),
 
-    skip_stage=False,
+    skip_stage=True,
     extract_patches=False,
+    evaluate_stage=True,
     type="vit_based_anomaly_detector",
     vit_patch_size=8,
     vit_arch="vit_base",  # 'vit_tiny', 'vit_small', 'vit_base'
@@ -156,7 +157,7 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD1',
+                type='DOTAv2DatasetOOD11',
                 data_root='/home/shoval/Documents/Repositories/data/gsd_normalized_dataset_rotated/train' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/train',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
@@ -185,7 +186,7 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD1',
+                type='DOTAv2DatasetOOD11',
                 data_root='/home/shoval/Documents/Repositories/data/gsd_normalized_dataset_rotated/val' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/val',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
@@ -214,7 +215,7 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD1',
+                type='DOTAv2DatasetOOD11',
                 data_root='/home/shoval/Documents/Repositories/data/gsd_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
@@ -236,7 +237,7 @@ anomaly_detector_cfg = dict(
                         type='mmdet.PackDetInputs',
                         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape', 'scale_factor'))
                 ])),
-        train_cfg=dict(type='EpochBasedTrainLoop', max_epochs=12, val_interval=1),
+        train_cfg=dict(type='EpochBasedTrainLoop', max_epochs=15, val_interval=1),
         val_cfg=dict(type='ValLoop'),
         test_cfg=dict(type='TestLoop'),
         default_scope='mmrotate',
@@ -265,9 +266,9 @@ anomaly_detector_cfg = dict(
             dict(
                 type='MultiStepLR',
                 begin=0,
-                end=12,
+                end=15,
                 by_epoch=True,
-                milestones=[8, 11],
+                milestones=[11, 14],
                 gamma=0.1)
         ],
         # optim_wrapper=dict(
@@ -286,7 +287,7 @@ anomaly_detector_cfg = dict(
         log_processor = dict(type='LogProcessor', window_size=50, by_epoch=True),
         log_level='INFO',
         load_from=None,
-        resume=False,
+        resume=True,
 
         model=dict(
             type='mmdet.BBoxRegressor',
@@ -337,13 +338,13 @@ anomaly_detector_cfg = dict(
     ),
 )
 
-classifier_cfg = dict(type="vit",
+classifier_cfg = dict(type="resnet18",
                       train_output_dir="train/Classifier",
                       test_output_dir="test/Classifier",
                       model_path='google/vit-base-patch16-224-in21k',
-                      retrain=True,
+                      retrain=False,
                       resume=False,
-                      max_epoch=15,
+                      max_epoch=100,
                       milestones=[30, 60, 90],
                       checkpoint_path="checkpoints",
                       train_batch_size=100,

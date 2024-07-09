@@ -103,6 +103,7 @@ anomaly_detector_cfg = dict(
 
     skip_stage=False,
     extract_patches=True,
+    evaluate_stage=True,
     type="vit_based_anomaly_detector",
     vit_patch_size=8,
     vit_arch="vit_base",  # 'vit_tiny', 'vit_small', 'vit_base'
@@ -243,9 +244,9 @@ anomaly_detector_cfg = dict(
             dict(
                 type='LinearLR',
                 start_factor=0.3333333333333333,
-                by_epoch=True,
+                by_epoch=False,
                 begin=0,
-                end=1),
+                end=220),
             dict(
                 type='MultiStepLR',
                 begin=0,
