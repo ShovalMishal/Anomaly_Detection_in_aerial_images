@@ -335,7 +335,7 @@ classifier_cfg = dict(type="resnet18",
                       val_batch_size=100,
                       dataloader_num_workers=10,
                       weighted_sampler=False,
-                      loss_class_weights=False,
+                      loss_class_weights=True,
                       evaluate=True)
 
 OOD_detector_cfg = dict(type="ODIN",

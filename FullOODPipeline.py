@@ -5,9 +5,10 @@ from argparse import ArgumentParser
 import torch
 from mmengine.config import Config
 
-from AnomalyDetector import VitBasedAnomalyDetector
+from AnomalyDetector import VitBasedAnomalyDetector, retrieve_anomaly_scores_for_test_dataset
 from Classifier import VitClassifier, ResNet18Classifier
-from OODDetector import ODINOODDetector, save_k_outliers, rank_samples_accord_features
+from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, rank_samples_accord_features, \
+    MSPOODDetector
 from Classifier import create_dataloaders, DatasetType
 from results import plot_graphs
 from utils import create_logger
@@ -37,7 +38,8 @@ class FullODDPipeline:
                                                       self.output_dir, self.logger, self.current_run_name)
         self.classifier = {'vit': VitClassifier, 'resnet18': ResNet18Classifier}[self.classifier_cfg.type]
         self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger, self.current_run_name)
-        self.OOD_detector = {'ODIN': ODINOODDetector}[self.OOD_detector_cfg.type]
+        self.OOD_detector = {'ODIN': ODINOODDetector, 'Energy': EnergyOODDetector, 'msp': MSPOODDetector,
+                             'vim': ViMOODDetector}[self.OOD_detector_cfg.type]
         self.OOD_detector = self.OOD_detector(output_dir=self.output_dir, current_run_name=self.current_run_name)
 
     def train(self):
@@ -54,6 +56,9 @@ class FullODDPipeline:
         os.makedirs(os.path.join(self.output_dir, "test"), exist_ok=True)
         model = self.classifier.get_fine_tuned_model().to(device)
         model = model.eval()
+        if self.OOD_detector_cfg.type == 'vim':
+            self.OOD_detector.initiate_vim(model=model, train_dataloader=self.classifier.in_dist_train_dataloader)
+
         if self.classifier_cfg.evaluate:
             self.logger.info("Evaluate trained model...")
             self.classifier.evaluate_classifier(best_model=model)
@@ -68,10 +73,9 @@ class FullODDPipeline:
             use_weighted_sampler=self.classifier_cfg.weighted_sampler)
 
         if not os.path.exists(self.OOD_detector.test_dataset_scores_and_labels):
-            scores, labels, preds, bg_scores = self.OOD_detector.score_samples(dataloader=test_dataloader,
-                                                                               return_background_score=True,
+            scores, labels, preds = self.OOD_detector.score_samples(dataloader=test_dataloader,
                                                                                save_outliers=True)
-            labels_scores_dict = {'scores': scores.tolist(), 'labels': labels.tolist(), 'preds': preds.tolist(), 'bg_scores': bg_scores.tolist()}
+            labels_scores_dict = {'scores': scores.tolist(), 'labels': labels.tolist(), 'preds': preds.tolist()}
             with open(self.OOD_detector.test_dataset_scores_and_labels, 'w') as f:
                 json.dump(labels_scores_dict, f, indent=4)
         else:
@@ -80,17 +84,24 @@ class FullODDPipeline:
                 scores = torch.tensor(data['scores'])
                 labels = torch.tensor(data['labels'])
                 preds = torch.tensor(data['preds'])
-                bg_scores = torch.tensor(data['bg_scores'])
+
+        anomaly_scores, anomaly_scores_conv = retrieve_anomaly_scores_for_test_dataset(test_dataloader,
+                                                                  self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file)
 
         if self.OOD_detector_cfg.save_outliers:
             save_k_outliers(all_scores=scores, all_labels=labels, dataloader=test_dataloader,
-                            outliers_path=self.OOD_detector.outliers_path, k=self.OOD_detector_cfg.num_of_outliers)
+                            outliers_path=self.OOD_detector.outliers_path, k=self.OOD_detector_cfg.num_of_outliers,
+                            logger=self.logger)
 
 
-        _, _, eer_threshold= plot_graphs(scores=scores, labels=labels, path=self.OOD_detector.test_output, title="OOD stage",
-                    abnormal_labels=list(test_dataloader.dataset.ood_classes.values()), dataset_name="test",
-                    ood_mode=True, labels_to_classes_names=test_dataloader.dataset.labels_to_classes_names,
-                    plot_EER=True, bg_scores=bg_scores, logger=self.logger)
+
+        _, _, eer_threshold= plot_graphs(scores=scores, anomaly_scores=anomaly_scores,
+                                         anomaly_scores_conv=anomaly_scores_conv, labels=labels,
+                                         path=self.OOD_detector.test_output, title="OOD stage",
+                                         abnormal_labels=list(test_dataloader.dataset.ood_classes.values()),
+                                         dataset_name="test", ood_mode=True,
+                                         labels_to_classes_names=test_dataloader.dataset.labels_to_classes_names,
+                                         plot_EER=True, logger=self.logger, OOD_method=self.OOD_detector_cfg.type)
 
         if self.OOD_detector_cfg.rank_accord_features:
             rank_samples_accord_features(scores, list(test_dataloader.dataset.ood_classes.values()),

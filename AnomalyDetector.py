@@ -4,6 +4,9 @@ import os
 import cv2
 
 import random
+
+from matplotlib import pyplot as plt
+from mmrotate.structures import RotatedBoxes
 from mmrotate.structures.bbox import hbox2rbox
 from mmrotate.evaluation import eval_rbbox_mrecall_for_regressor
 import numpy as np
@@ -45,11 +48,13 @@ class AnomalyDetector:
     def __init__(self, output_dir, anomaly_detector_cfg, logger, current_run_name):
         self.anomaly_detector_cfg = anomaly_detector_cfg
         self.logger = logger
+        self.test_output_dir = os.path.join(output_dir, "test/anomaly_detection_result", current_run_name)
         self.output_dir = os.path.join(output_dir, "train/anomaly_detection_result", current_run_name)
         self.data_output_dir = os.path.join(self.output_dir,
                                             anomaly_detector_cfg.data_output_dir_name)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.data_output_dir, exist_ok=True)
+        os.makedirs(self.test_output_dir, exist_ok=True)
         # create train, test and validation datasets
         self.proposals_cache_path = os.path.join(self.output_dir, 'cache_folder')
         os.makedirs(self.proposals_cache_path, exist_ok=True)
@@ -57,7 +62,7 @@ class AnomalyDetector:
         self.output_dir_train_dataset = os.path.join(self.data_output_dir, "train")
         self.output_dir_val_dataset = os.path.join(self.data_output_dir, "val")
         self.output_dir_test_dataset = os.path.join(self.data_output_dir, "test")
-        self.hashmap_locations_test_file = os.path.join(self.output_dir_test_dataset, "hash_map_locations_test_dataset.json")
+        self.hashmap_locations_and_anomaly_scores_test_file = os.path.join(self.output_dir_test_dataset, "hash_map_locations_and_anomaly_scores_test_dataset.json")
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
         self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
 
@@ -130,7 +135,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                         continue
                     img = input
                     heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img)
-                    predicted_patches, _, _ = extract_patches_accord_heatmap(heatmap=heatmap,
+                    predicted_patches, _, patches_scores_conv, patches_scores = extract_patches_accord_heatmap(heatmap=heatmap,
                                                                              img_id=data_sample.img_id,
                                                                              patch_size=self.proposals_sizes['square'],
                                                                              plot=False,
@@ -140,6 +145,9 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                              image_path=data_sample.img_path)
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
+                    if target_dir == self.test_target_dir:
+                        cache_dict['patches_scores'] = patches_scores
+                        cache_dict['patches_scores_conv'] = patches_scores_conv
                     try:
                         torch.save(cache_dict, save_path)
                     except Exception as e:
@@ -217,15 +225,19 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
             self.logger.info(f"Anomaly detection - test dataset\n")
             # saving test bounding boxes locations
-            if os.path.exists(self.hashmap_locations_test_file):
-                os.remove(self.hashmap_locations_test_file)
-            hashmap_locations_test = {}
+            if os.path.exists(self.hashmap_locations_and_anomaly_scores_test_file):
+                os.remove(self.hashmap_locations_and_anomaly_scores_test_file)
+            hashmap_locations_and_anomaly_scores_test = {}
             for batch in tqdm(self.test_dataloader):
                 for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                     # iterate per image to save all patches
                     data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(device)
                     regressor_results = self.bbox_regressor_runner.model.predict(
                         data_inputs.unsqueeze(dim=0).to(device), [data_sample])
+                    curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
+                    with open(curr_anomaly_scores_file, 'rb') as f:
+                        scores_dict = torch.load(f)
+                        del scores_dict['predicted_patches']
                     assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
                                                                 regressor_results=regressor_results,
                                                                 gt_instances=data_sample.gt_instances,
@@ -238,9 +250,13 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 extract_bbox_path=self.output_dir_test_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer,
                                                                 train=False,
-                                                                hashmap_locations=hashmap_locations_test)
-            with open(self.hashmap_locations_test_file, 'w') as f:
-                json.dump(hashmap_locations_test, f, indent=4)
+                                                                hashmap_locations=hashmap_locations_and_anomaly_scores_test,
+                                                                scores_dict=scores_dict)
+
+
+            with open(self.hashmap_locations_and_anomaly_scores_test_file, 'w') as f:
+                json.dump(hashmap_locations_and_anomaly_scores_test, f, indent=4)
+            self.plot_ranks_graph_after_AD_stage()
         if self.evaluate_stage:
             self.test_with_and_without_regressor()
     def test_with_and_without_regressor(self):
@@ -260,7 +276,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         scale_ranges = self.anomaly_detector_cfg.bbox_regressor.test_evaluator.scale_ranges
         classes = self.bbox_regressor_runner.test_dataloader.dataset.METAINFO['classes']
         eval_rbbox_mrecall_for_regressor(det_results=predicted_bbox, annotations=gts, scale_ranges=scale_ranges,
-                                     dataset=classes, logger=self.logger)
+                                         dataset=classes, logger=self.logger)
 
     def plot_with_and_without_regressor(self):
         # test without regressor
@@ -300,3 +316,61 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                           out_file=os.path.join(output_dir, data_sample.img_id + ".png"),
                                           wait_time=0,
                                           draw_text=False)
+
+    def plot_ranks_graph_after_AD_stage(self):
+        all_labels = []
+        all_AD_socres = []
+        for batch in tqdm(self.test_dataloader):
+            for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
+                formatted_proposals_patches = RotatedBoxes(hbox2rbox(data_sample.predicted_patches.predicted_patches))
+                formatted_proposals_patches = InstanceData(priors=formatted_proposals_patches)
+                assign_result = self.bbox_assigner.assign(
+                    formatted_proposals_patches.to(device), data_sample.gt_instances.to(device))
+                all_labels.extend(assign_result.labels.cpu().numpy())
+                # open pt file a read for each patch its corresponds anomaly score
+                curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
+                with open(curr_anomaly_scores_file, 'rb') as f:
+                    scores_dict = torch.load(f)
+                all_AD_socres.extend(scores_dict['patches_scores'])
+
+        all_AD_socres = torch.tensor(all_AD_socres)
+        all_labels= torch.tensor(all_labels)
+        sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(all_AD_socres)
+        ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(word) for word in self.test_dataloader.dataset.ood_labels]
+        for OOD_label in ood_labels:
+            if OOD_label not in all_labels:
+                continue
+            curr_label_anomaly_scores = all_AD_socres[all_labels == OOD_label]
+            curr_label_sorted_anomaly_scores, curr_label_anomaly_scores_indices = torch.sort(
+                curr_label_anomaly_scores)
+            curr_label_ranks_in_all_anomaly_scores = len(
+                sorted_all_anomaly_scores) - 1 - torch.searchsorted(sorted_all_anomaly_scores,
+                                                                    curr_label_sorted_anomaly_scores)
+            plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
+                     torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
+                     label=self.test_dataloader.dataset.METAINFO['classes'][OOD_label])
+
+            # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
+        plt.xlabel(f'abnormal objects ranks in anomaly detection scores')
+        plt.ylabel(f'all samples anomaly detection scores rank')
+        plt.title('Abnormal objects ranks')
+        plt.yscale('log')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(os.path.join(self.test_output_dir, f"abnormal_ranks_in_anomaly_detection_scores.pdf"))
+
+
+def retrieve_anomaly_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anomaly_scores_test_file):
+    with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
+        hashmap_locations_and_anomaly_scores_test = json.load(f)
+
+    anomaly_scores = []
+    anomaly_scores_conv = []
+    for batch_index, batch in enumerate(test_dataloader):
+        for path in batch['path']:
+            img_id = os.path.basename(path).split('.')[0]
+            curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
+            anomaly_scores.append(curr_file_data['anomaly_score'])
+            anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
+
+    return anomaly_scores, anomaly_scores_conv

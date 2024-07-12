@@ -26,8 +26,10 @@ class OODAndIDDataset(ImageFolder):
     def __getitem__(self, index):
         original_tuple = super().__getitem__(index)
         label = self.custom_label_mapping[original_tuple[1]]
+        full_path = self.imgs[index][0]
+        relative_path = os.path.relpath(full_path, self.root)
         # return original_tuple[0], label
-        return {"pixel_values": original_tuple[0], "labels": label}
+        return {"pixel_values": original_tuple[0], "labels": label, "path": relative_path}
 
 
 def generate_label_mappers(classes=None, ood_classes_names=None):

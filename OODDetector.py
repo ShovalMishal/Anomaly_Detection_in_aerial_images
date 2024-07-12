@@ -1,16 +1,20 @@
+import json
 import os
 import pickle
+import shutil
 
 import torch
 import numpy as np
 from enum import Enum
 
+from PIL import Image
 from matplotlib import pyplot as plt
 from torch.autograd import Variable
 import torch.nn as nn
 from tqdm import tqdm
 import torchvision.transforms as transforms
-
+import torch.nn.functional as F
+from detectors.vim import ViM
 
 DEFAULT_ODIN_TEMP = 1000
 DEFAULT_ODIN_NOISE_MAGNITUDE = 1e-3
@@ -31,66 +35,12 @@ class OODDetector:
         self.test_output = os.path.join(self.output_dir, "test/OOD", current_run_name)
         os.makedirs(self.train_output, exist_ok=True)
         os.makedirs(self.test_output, exist_ok=True)
-        self.test_dataset_scores_and_labels = os.path.join(self.test_output, "test_dataset_scores_and_labels.json")
-        self.outliers_path = os.path.join(self.test_output, "outliers")
-        os.makedirs(self.outliers_path, exist_ok=True)
 
-    def score_samples(self, dataloader, return_background_score=False):
-        pass
-
-    def train(self):
-        pass
-
-
-class ODINOODDetector(OODDetector):
-    def __init__(self, output_dir, current_run_name, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
-                 temperature=DEFAULT_ODIN_TEMP, ):
-        super().__init__(output_dir, current_run_name)
-        self.model = None
-        self.epsilon = epsilon
-        self.temperature = temperature
-
-    def calculate_odin_scores(self, inputs, return_background_score=False):
-        criterion = nn.CrossEntropyLoss()
-        inputs = Variable(inputs, requires_grad=True)
-        inputs = inputs.cuda()
-        inputs.retain_grad()
-
-        outputs = self.model(inputs)
-
-        maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
-        if return_background_score:
-            background_score = outputs.data.cpu().numpy()[:, 0]
-
-        # Using temperature scaling
-        outputs = outputs / self.temperature
-
-        labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
-        loss = criterion(outputs, labels)
-        loss.backward()
-
-        # Normalizing the gradient to binary in {0, 1}
-        gradient = torch.ge(inputs.grad.data, 0)
-        gradient = (gradient.float() - 0.5) * 2
-
-        # Adding small perturbations to images
-        tempInputs = torch.add(input=inputs.data, alpha=-self.epsilon, other=gradient)
-        outputs = self.model(Variable(tempInputs))
-        outputs = outputs / self.temperature
-        # Calculating the confidence after adding perturbations
-        nnOutputs = outputs.data.cpu()
-        nnOutputs = nnOutputs.numpy()
-        nnOutputs = nnOutputs - np.max(nnOutputs, axis=1, keepdims=True)
-        nnOutputs = np.exp(nnOutputs) / np.sum(np.exp(nnOutputs), axis=1, keepdims=True)
-        scores = np.max(nnOutputs, axis=1)
-        return torch.from_numpy(scores), torch.from_numpy(maxIndexTemp), torch.from_numpy(background_score)
-
-    def score_samples(self, dataloader, return_background_score=False, save_outliers=False):
+    def score_samples(self, dataloader,  save_outliers=False):
         all_scores = []
         all_labels = []
         all_preds = []
-        all_bg_scores = []
-        cache_dir =os.path.join(self.test_output, "odin_scores")
+        cache_dir = os.path.join(self.test_output, f"{self.ood_type}_scores")
         os.makedirs(cache_dir, exist_ok=True)
         next_cache_index = 0
         for batch_ind, batch in tqdm(enumerate(dataloader)):
@@ -110,20 +60,15 @@ class ODINOODDetector(OODDetector):
                     pickle.dump(all_labels, f)
                 with open(os.path.join(cache_dir, f'all_preds_cache_{next_cache_index}.pkl'), 'wb') as f:
                     pickle.dump(all_preds, f)
-                with open(os.path.join(cache_dir, f'all_bg_scores_cache_{next_cache_index}.pkl'), 'wb') as f:
-                    pickle.dump(all_bg_scores, f)
                 all_scores = []
                 all_labels = []
                 all_preds = []
-                all_bg_scores = []
                 next_cache_index = curr_cache_index
 
-            scores, pred_labels, bg_scores = self.calculate_odin_scores(images.to(device),
-                                                                        return_background_score=return_background_score)
+            scores, pred_labels = self.calculate_method_scores(images.to(device))
             all_scores.append(scores)
             all_labels.append(labels)
             all_preds.append(pred_labels)
-            all_bg_scores.append(bg_scores)
 
         # cache leftovers:
         curr_cache_file = os.path.join(cache_dir, f'all_scores_cache_{curr_cache_index}.pkl')
@@ -134,8 +79,7 @@ class ODINOODDetector(OODDetector):
                 pickle.dump(all_labels, f)
             with open(os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl'), 'wb') as f:
                 pickle.dump(all_preds, f)
-            with open(os.path.join(cache_dir, f'all_bg_scores_cache_{next_cache_index}.pkl'), 'wb') as f:
-                pickle.dump(all_bg_scores, f)
+
         all_scores_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_scores_cache_')]
         all_scores_caches.sort(key=lambda x: int(x.split('all_scores_cache_')[-1].split('.pkl')[0]))
         all_scores = []
@@ -160,31 +104,147 @@ class ODINOODDetector(OODDetector):
                 all_preds.append(pickle.load(f))
         all_preds = sum(all_preds, [])
 
-        all_bg_scores_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_bg_scores_cache_')]
-        all_bg_scores_caches.sort(key=lambda x: int(x.split('all_bg_scores_cache_')[-1].split('.pkl')[0]))
-        all_bg_scores = []
-        for cache_name in all_bg_scores_caches:
-            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
-                all_bg_scores.append(pickle.load(f))
-        all_bg_scores = sum(all_bg_scores, [])
+        return torch.cat(all_scores, dim=0), torch.cat(all_labels, dim=0), torch.cat(all_preds, dim=0)
 
-        all_scores = torch.cat(all_scores, dim=0)
-        all_labels = torch.cat(all_labels, dim=0)
+    def train(self):
+        pass
 
-        return all_scores, all_labels, torch.cat(all_preds, dim=0), torch.cat(all_bg_scores, dim=0)
 
-def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
+class ODINOODDetector(OODDetector):
+    def __init__(self, output_dir, current_run_name, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
+                 temperature=DEFAULT_ODIN_TEMP, ):
+        super().__init__(output_dir, current_run_name)
+        self.model = None
+        self.epsilon = epsilon
+        self.temperature = temperature
+        self.ood_type = "odin"
+        self.test_output = os.path.join(self.test_output, self.ood_type)
+        self.test_dataset_scores_and_labels = os.path.join(self.test_output,
+                                                           f"test_dataset_scores_and_labels_{self.ood_type}.json")
+        self.outliers_path = os.path.join(self.test_output,  "outliers")
+        os.makedirs(self.outliers_path, exist_ok=True)
+
+    def calculate_method_scores(self, inputs):
+        criterion = nn.CrossEntropyLoss()
+        inputs = Variable(inputs, requires_grad=True)
+        inputs = inputs.cuda()
+        inputs.retain_grad()
+
+        outputs = self.model(inputs)
+
+        maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
+
+        # Using temperature scaling
+        outputs = outputs / self.temperature
+
+        labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
+        loss = criterion(outputs, labels)
+        loss.backward()
+
+        # Normalizing the gradient to binary in {0, 1}
+        gradient = torch.ge(inputs.grad.data, 0)
+        gradient = (gradient.float() - 0.5) * 2
+
+        # Adding small perturbations to images
+        tempInputs = torch.add(input=inputs.data, alpha=-self.epsilon, other=gradient)
+        outputs = self.model(Variable(tempInputs))
+        outputs = outputs / self.temperature
+        # Calculating the confidence after adding perturbations
+        nnOutputs = outputs.data.cpu()
+        nnOutputs = nnOutputs.numpy()
+        nnOutputs = nnOutputs - np.max(nnOutputs, axis=1, keepdims=True)
+        nnOutputs = np.exp(nnOutputs) / np.sum(np.exp(nnOutputs), axis=1, keepdims=True)
+        scores = np.max(nnOutputs, axis=1)
+        return torch.from_numpy(scores), torch.from_numpy(maxIndexTemp)
+
+
+class EnergyOODDetector(OODDetector):
+    def __init__(self, output_dir, current_run_name, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
+                 temperature=DEFAULT_ODIN_TEMP, ):
+        super().__init__(output_dir, current_run_name)
+        self.model = None
+        self.epsilon = epsilon
+        self.temperature = temperature
+        self.ood_type = "energy"
+        self.test_output = os.path.join(self.test_output, self.ood_type)
+        self.test_dataset_scores_and_labels = os.path.join(self.test_output,
+                                                           f"test_dataset_scores_and_labels_{self.ood_type}.json")
+        self.outliers_path = os.path.join(self.test_output, "outliers")
+        os.makedirs(self.outliers_path, exist_ok=True)
+
+    def calculate_method_scores(self, inputs):
+        preds = self.model(inputs)
+        scores = self.temperature * torch.log(
+            torch.sum(torch.exp(preds.detach().cpu().type(torch.DoubleTensor)) / self.temperature, dim=1))
+
+        return (scores, torch.from_numpy(np.argmax(preds.data.cpu().numpy(), axis=1)))
+
+
+
+class MSPOODDetector(OODDetector):
+    def __init__(self, output_dir, current_run_name, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
+                 temperature=DEFAULT_ODIN_TEMP, ):
+        super().__init__(output_dir, current_run_name)
+        self.model = None
+        self.epsilon = epsilon
+        self.temperature = temperature
+        self.ood_type = "msp"
+        self.test_output = os.path.join(self.test_output, self.ood_type)
+        self.test_dataset_scores_and_labels = os.path.join(self.test_output,
+                                                           f"test_dataset_scores_and_labels_{self.ood_type}.json")
+        self.outliers_path = os.path.join(self.test_output, "outliers")
+        os.makedirs(self.outliers_path, exist_ok=True)
+
+    def calculate_method_scores(self, inputs):
+        preds = self.model(inputs)
+        scores = torch.max(F.softmax(preds, dim=1).detach().cpu(), axis=1)
+
+        return (scores[0], torch.from_numpy(np.argmax(preds.data.cpu().numpy(), axis=1)))
+
+
+
+class ViMOODDetector(OODDetector):
+    def __init__(self, output_dir, current_run_name, epsilon=DEFAULT_ODIN_NOISE_MAGNITUDE,
+                 temperature=DEFAULT_ODIN_TEMP, ):
+        super().__init__(output_dir, current_run_name)
+        self.model = None
+        self.epsilon = epsilon
+        self.temperature = temperature
+        self.ood_type = "vim"
+        self.test_output = os.path.join(self.test_output, self.ood_type)
+        self.test_dataset_scores_and_labels = os.path.join(self.test_output,
+                                                           f"test_dataset_scores_and_labels_{self.ood_type}.json")
+        self.outliers_path = os.path.join(self.test_output, "outliers")
+        os.makedirs(self.outliers_path, exist_ok=True)
+
+
+
+    def initiate_vim(self, model, train_dataloader):
+        self.model = model
+        self.vim = ViM(model, )
+        train_samples_batch = next(iter(train_dataloader)) # batch of samples from train
+        images = train_samples_batch['pixel_values'].to('cuda')
+        self.vim.start()
+        self.vim.update(images)
+        self.vim.end()
+
+    def calculate_method_scores(self, inputs):
+        scores = self.vim(inputs).detach().cpu()
+        preds = self.model(inputs)
+
+        return (scores, torch.from_numpy(np.argmax(preds.data.cpu().numpy(), axis=1)))
+
+
+
+
+
+def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50, logger=None):
     labels_to_classes_names = dataloader.dataset.labels_to_classes_names
     # Define the transform to unnormalize the image for resnet18 dataloaders
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
     save_path = os.path.join(outliers_path, f"{k}_lowest_scores_bg_patches")
     os.makedirs(save_path, exist_ok=True)
-    unnormalize = transforms.Compose([
-        transforms.Normalize(mean=[0, 0, 0], std=[1 / s for s in std]),
-        transforms.Normalize(mean=[-m for m in mean], std=[1, 1, 1]),
-        transforms.ToPILImage()
-    ])
+    lowest_score_outlier_to_relative_path = {}
+    highest_score_outlier_to_relative_path = {}
 
     # save the k lowest scored background samples
     bg_indices = torch.nonzero(all_labels == 0).squeeze()
@@ -194,11 +254,11 @@ def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
     for i, sample_ind in tqdm(enumerate(lowest_k_bg_indices_original)):
         # save outlier image
         sample = dataloader.dataset.__getitem__(sample_ind)
-        image = sample['pixel_values']
+        original_image_path = os.path.join(dataloader.dataset.root, sample["path"])
+        image = Image.open(original_image_path)
         label = sample['labels']
-        unnormalized_image = unnormalize(image)
-        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}")
-        unnormalized_image.save(f"{image_path}.jpg")
+        new_image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}.jpg")
+        image.save(new_image_path, 'JPEG')
 
     # save the k lowest score samples
     save_path = os.path.join(outliers_path, f"{k}_lowest_scores_patches")
@@ -207,11 +267,12 @@ def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
     for i, sample_ind in tqdm(enumerate(lowest_k_indices)):
         # save outlier image
         sample = dataloader.dataset.__getitem__(sample_ind)
-        image = sample['pixel_values']
         label = sample['labels']
-        unnormalized_image = unnormalize(image)
-        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}")
-        unnormalized_image.save(f"{image_path}.jpg")
+        original_image_path = os.path.join(dataloader.dataset.root, sample["path"])
+        image = Image.open(original_image_path)
+        new_image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}.jpg")
+        lowest_score_outlier_to_relative_path[f"{labels_to_classes_names[label]}_outlier_num_{i+1}"] = sample["path"]
+        image.save(new_image_path, 'JPEG')
 
     # save the k highest score samples
     save_path = os.path.join(outliers_path, f"{k}_highest_scores_patches")
@@ -220,11 +281,12 @@ def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
     for i, sample_ind in tqdm(enumerate(highest_k_indices)):
         # save outlier image
         sample = dataloader.dataset.__getitem__(sample_ind)
-        image = sample['pixel_values']
         label = sample['labels']
-        unnormalized_image = unnormalize(image)
-        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}")
-        unnormalized_image.save(f"{image_path}.jpg")
+        original_image_path = os.path.join(dataloader.dataset.root, sample["path"])
+        image = Image.open(original_image_path)
+        new_image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_outlier_num_{i+1}.jpg")
+        highest_score_outlier_to_relative_path[f"{labels_to_classes_names[label]}_outlier_num_{i + 1}"] = sample["path"]
+        image.save(new_image_path, 'JPEG')
 
     # save the k highest scored background samples
     save_path = os.path.join(outliers_path, f"{k}_highest_bg_scores_patches")
@@ -234,12 +296,18 @@ def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50):
     for i, sample_ind in tqdm(enumerate(highest_k_bg_indices_original)):
         # save outlier image
         sample = dataloader.dataset.__getitem__(sample_ind)
-        image = sample['pixel_values']
         label = sample['labels']
-        unnormalized_image = unnormalize(image)
-        image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}")
-        unnormalized_image.save(f"{image_path}.jpg")
+        original_image_path = os.path.join(dataloader.dataset.root, sample["path"])
+        image = Image.open(original_image_path)
+        new_image_path = os.path.join(save_path, f"{labels_to_classes_names[label]}_bg_outlier_num_{i+1}.jpg")
+        image.save(new_image_path, 'JPEG')
 
+
+    with open(os.path.join(outliers_path, f"{k}_lowest_scores_outliers_to_relative_path.json"), 'w') as f:
+        json.dump(lowest_score_outlier_to_relative_path, f, indent=4)
+
+    with open(os.path.join(outliers_path, f"{k}_highest_scores_outliers_to_relative_path.json"), 'w') as f:
+        json.dump(highest_score_outlier_to_relative_path, f, indent=4)
 
 def rank_samples_accord_features(scores, ood_labels, eer_threshold, model, dataloader, path, logger):
     logger.info("Ranking samples according features\n")

@@ -8,17 +8,19 @@ from sklearn.metrics import RocCurveDisplay, PrecisionRecallDisplay, average_pre
 import plotly.graph_objects as go
 
 
-def plot_graphs(scores, labels, path, abnormal_labels, title="", dataset_name="train", ood_mode=False,
-                labels_to_classes_names=None, plot_EER=False, bg_scores=None, logger=None):
+def plot_graphs(scores, anomaly_scores, anomaly_scores_conv, labels, path, abnormal_labels, title="", dataset_name="train", ood_mode=False,
+                labels_to_classes_names=None, plot_EER=False, logger=None, OOD_method=None):
     os.makedirs(path, exist_ok=True)
     plot_scores_histograms(scores=scores, labels=labels, abnormal_labels=abnormal_labels, title=title, path=path,
                            dataset_name=dataset_name, labels_to_classes_names=labels_to_classes_names,
                            per_label=True)
     ap = plot_precision_recall_curve(labels=labels, scores=scores, abnormal_labels=abnormal_labels, title=title,
                                      path=path, dataset_name=dataset_name, ood_mode=ood_mode)
-    auc, eer_threshold = plot_roc_curve(labels=labels, scores=scores, abnormal_labels=abnormal_labels, title=title, path=path,
-                         dataset_name=dataset_name, ood_mode=ood_mode, plot_EER=plot_EER, bg_scores=bg_scores,
-                         logger=logger, labels_to_classes_names=labels_to_classes_names)
+    auc, eer_threshold = plot_roc_curve(labels=labels, scores=scores, anomaly_scores=anomaly_scores,
+                                        anomaly_scores_conv=anomaly_scores_conv, abnormal_labels=abnormal_labels,
+                                        title=title, path=path, dataset_name=dataset_name, ood_mode=ood_mode,
+                                        plot_EER=plot_EER, logger=logger,
+                                        labels_to_classes_names=labels_to_classes_names, OOD_method=OOD_method)
     return auc, ap, eer_threshold
 
 
@@ -69,8 +71,9 @@ def analyze_roc_curve(labels, abnormal_labels, scores, desired_tpr=0.95, ood_mod
     return threshold, chosen_fpr, chosen_tpr
 
 
-def plot_roc_curve(labels, scores, abnormal_labels, title="", path: str = "", dataset_name="train", ood_mode=False,
-                   plot_EER=False, bg_scores=None, logger=None, labels_to_classes_names=None, rank_accord_features=True):
+def plot_roc_curve(labels, scores, anomaly_scores, anomaly_scores_conv, abnormal_labels, title="", path: str = "",
+                   dataset_name="train", ood_mode=False, plot_EER=False,  logger=None, labels_to_classes_names=None,
+                   OOD_method=None):
     # all abnormal labels are changed to 1
     mask = labels.unsqueeze(1).eq(torch.tensor(abnormal_labels).unsqueeze(0))
     new_labels = torch.any(mask, dim=1).to(torch.int)
@@ -99,8 +102,9 @@ def plot_roc_curve(labels, scores, abnormal_labels, title="", path: str = "", da
     plt.tight_layout()
     eer_threshold, eer_threshold_idx = calculate_eer_threshold(fpr, tpr, thresholds)
     if plot_EER:
-        plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dataset_name, new_labels, labels,
-                                      abnormal_labels, bg_scores, logger, labels_to_classes_names)
+        plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, anomaly_scores, anomaly_scores_conv,
+                                      dataset_name, new_labels, labels, abnormal_labels, logger,
+                                      labels_to_classes_names, OOD_method)
 
 
     return auc, eer_threshold
@@ -177,8 +181,9 @@ def calculate_eer_threshold(fpr, tpr, thresholds):
     eer_threshold = thresholds[eer_threshold_idx]
     return eer_threshold, eer_threshold_idx
 
-def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dataset_name, new_labels, labels,
-                                  abnormal_labels, bg_scores, logger=None, labels_to_classes_names=None):
+def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, anomaly_scores, anomaly_scores_conv,
+                                  dataset_name, new_labels, labels, abnormal_labels, logger=None,
+                                  labels_to_classes_names=None, OOD_method=None):
     eer_threshold, eer_threshold_idx = calculate_eer_threshold(fpr, tpr, thresholds)
     # Plot EER point
     plt.scatter(fpr[eer_threshold_idx], tpr[eer_threshold_idx], c='red', label=f'EER Threshold ({eer_threshold:.4f})')
@@ -206,29 +211,42 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
                           normalize=False,
                           output_dir=path)
 
-    # OOD odin score ranks plot
-    high_thresh_odin_scores = scores[scores >= eer_threshold]
+
+    # OOD score ranks plot
+    high_thresh_ood_scores = scores[scores >= eer_threshold]
     high_thresh_labels = labels[scores >= eer_threshold]
 
-    ood_high_thresh_odin_scores = high_thresh_odin_scores[[label in abnormal_labels for label in high_thresh_labels]]
-    sorted_ood_high_thresh_odin_scores, ood_high_thresh_odin_scores_indices = torch.sort(ood_high_thresh_odin_scores)
+    # ood_high_thresh_ood_scores = high_thresh_ood_scores[[label in abnormal_labels for label in high_thresh_labels]]
+    # sorted_ood_high_thresh_ood_scores, ood_high_thresh_ood_scores_indices = torch.sort(ood_high_thresh_ood_scores)
 
-    sorted_high_thresh_odin_scores, sorted_high_thresh_odin_scores_indices = torch.sort(high_thresh_odin_scores)
-    ood_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, sorted_ood_high_thresh_odin_scores)
+    sorted_high_thresh_ood_scores, sorted_high_thresh_ood_scores_indices = torch.sort(high_thresh_ood_scores)
+    # ood_ranks_in_sorted_high_thresh_ood_scores = len(sorted_high_thresh_ood_scores) - 1 - torch.searchsorted(sorted_high_thresh_ood_scores, sorted_ood_high_thresh_ood_scores)
 
-    # find how well OOD samples are ranked in the ODIN scores - per class
+    plt.figure()
+    # find how well OOD samples are ranked in the ood scores - per class
     data={}
     for OOD_label in abnormal_labels:
         if OOD_label not in high_thresh_labels:
             continue
-        curr_label_ood_high_thresh_odin_scores = high_thresh_odin_scores[high_thresh_labels == OOD_label]
-        curr_label_sorted_ood_high_thresh_odin_scores, curr_label_ood_high_thresh_odin_scores_indices = torch.sort(curr_label_ood_high_thresh_odin_scores)
-        curr_ood_label_ranks_in_sorted_high_thresh_odin_scores = len(sorted_high_thresh_odin_scores) - 1 - torch.searchsorted(sorted_high_thresh_odin_scores, curr_label_sorted_ood_high_thresh_odin_scores)
-        logger.info(f"OOD label {labels_to_classes_names[OOD_label]} first rank in ODIN scores: {torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_odin_scores)[0][0]}")
-        data[labels_to_classes_names[OOD_label]] = torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_odin_scores)[0][0]
+        curr_label_ood_high_thresh_ood_scores = high_thresh_ood_scores[high_thresh_labels == OOD_label]
+        curr_label_sorted_ood_high_thresh_ood_scores, curr_label_ood_high_thresh_ood_scores_indices = torch.sort(curr_label_ood_high_thresh_ood_scores)
+        curr_ood_label_ranks_in_sorted_high_thresh_ood_scores = len(sorted_high_thresh_ood_scores) - 1 - torch.searchsorted(sorted_high_thresh_ood_scores, curr_label_sorted_ood_high_thresh_ood_scores)
+        logger.info(f"OOD label {labels_to_classes_names[OOD_label]} first rank in {OOD_method} scores: {torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_ood_scores)[0][0]}")
+        plt.plot(list(range(len(curr_ood_label_ranks_in_sorted_high_thresh_ood_scores))),
+                 torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_ood_scores)[0], label=labels_to_classes_names[OOD_label])
+        data[labels_to_classes_names[OOD_label]] = torch.sort(curr_ood_label_ranks_in_sorted_high_thresh_ood_scores)[0][0]
+
+    plt.xlabel(f'OOD rank in {OOD_method} scores, after stage 2')
+    plt.ylabel('post stage 2 rank')
+    plt.title('OOD rank')
+    plt.yscale('log')
+    plt.grid(True)
+    plt.legend()
+    plt.savefig(path + f"/EER_OOD_rank_in_{OOD_method}_scores.pdf")
+    # plt.show()
+
     sorted_data = sorted(data.items(), key=lambda x: x[1])
     classes_names, first_rank = zip(*sorted_data)
-
     fig = plt.figure(figsize=(10, 5))
     plt.bar(classes_names, first_rank, width=0.4)
     plt.xlabel("novel classes")
@@ -241,51 +259,97 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, dat
     plt.savefig(path + f"/TT-1.pdf")
 
     plt.figure()
-    plt.plot(list(range(len(ood_ranks_in_sorted_high_thresh_odin_scores))), torch.sort(ood_ranks_in_sorted_high_thresh_odin_scores)[0])
-    plt.xlabel('OOD rank in ODIN scores, after stage 2')
-    plt.ylabel('post stage 2 rank')
+    # ood_scores = scores[[label in abnormal_labels for label in labels]]
+    # sorted_ood_scores, sorted_ood_scores_indices = torch.sort(ood_scores)
+
+    sorted_all_scores, sorted_all_scores_indices = torch.sort(scores)
+    # ood_ranks_in_sorted_ood_scores = len(sorted_all_scores) - 1 - torch.searchsorted(sorted_all_scores, sorted_ood_scores)
+
+    # ood scores ranks plot per class - all samples
+    for OOD_label in abnormal_labels:
+        if OOD_label not in labels:
+            continue
+        curr_label_ood_scores = scores[labels == OOD_label]
+        curr_label_sorted_ood_scores, curr_label_ood_scores_indices = torch.sort(
+            curr_label_ood_scores)
+        curr_label_ranks_in_all_ood_scores = len(
+            sorted_all_scores) - 1 - torch.searchsorted(sorted_all_scores,
+                                                                    curr_label_sorted_ood_scores)
+        plt.plot(list(range(len(curr_label_ranks_in_all_ood_scores))),
+                 torch.sort(curr_label_ranks_in_all_ood_scores)[0],
+                 label=labels_to_classes_names[OOD_label])
+
+
+    # plt.plot(list(range(len(ood_ranks_in_sorted_ood_scores))), torch.sort(ood_ranks_in_sorted_ood_scores)[0])
+    plt.xlabel(f'OOD ranks in {OOD_method} scores')
+    plt.ylabel(f'all samples {OOD_method} rank')
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/EER_OOD_rank_in_ODIN_scores.pdf")
+    plt.legend()
+    plt.savefig(path + f"/OOD_ranks_in_{OOD_method}_scores.pdf")
     # plt.show()
 
-    # OOD bg scores ranks plot
-    high_thresh_bg_scores = bg_scores[scores >= eer_threshold]
-    high_thresh_labels = labels[scores >= eer_threshold]
-
-    ood_high_thresh_bg_scores = high_thresh_bg_scores[[label in abnormal_labels for label in high_thresh_labels]]
-    sorted_ood_high_thresh_bg_scores, ood_high_thresh_bg_scores_indices = torch.sort(ood_high_thresh_bg_scores)
-
-    sorted_high_thresh_bg_scores, sorted_high_thresh_bg_scores_indices = torch.sort(high_thresh_bg_scores)
-    ood_ranks_in_sorted_high_thresh_bg_scores = torch.searchsorted(sorted_high_thresh_bg_scores, sorted_ood_high_thresh_bg_scores)
-
+    # anomaly_scores ranks plot
     plt.figure()
-    plt.plot(list(range(len(ood_ranks_in_sorted_high_thresh_bg_scores))), ood_ranks_in_sorted_high_thresh_bg_scores)
-    plt.xlabel('OOD rank in BG scores, after stage 2')
-    plt.ylabel('post stage 2 rank')
+    anomaly_scores = torch.tensor(anomaly_scores)
+    # abnormal_anomaly_scores = anomaly_scores[[label in abnormal_labels for label in labels]]
+    # sorted_abnormal_anomaly_scores, sorted_abnormal_anomaly_scores_indices = torch.sort(abnormal_anomaly_scores)
+
+    sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(anomaly_scores)
+    # abnormal_ranks_in_sorted_anomaly_scores = len(sorted_all_anomaly_scores) - 1 - torch.searchsorted(sorted_all_anomaly_scores, sorted_abnormal_anomaly_scores)
+
+    for OOD_label in abnormal_labels:
+        if OOD_label not in labels:
+            continue
+        curr_label_anomaly_scores = anomaly_scores[labels == OOD_label]
+        curr_label_sorted_anomaly_scores, curr_label_anomaly_scores_indices = torch.sort(
+            curr_label_anomaly_scores)
+        curr_label_ranks_in_all_anomaly_scores = len(
+            sorted_all_anomaly_scores) - 1 - torch.searchsorted(sorted_all_anomaly_scores,
+                                                                    curr_label_sorted_anomaly_scores)
+        plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
+                 torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
+                 label=labels_to_classes_names[OOD_label])
+
+    # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
+    plt.xlabel(f'OOD ranks in anomaly detection scores')
+    plt.ylabel(f'all samples anomaly detection scores rank')
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/EER_OOD_rank_in_BG_scores.pdf")
-    # plt.show()
+    plt.legend()
+    plt.savefig(path + f"/OOD_ranks_in_anomaly_detection_scores.pdf")
 
-    # ood odin scores ranks plot
-    ood_odin_scores = scores[[label in abnormal_labels for label in labels]]
-    sorted_ood_odin_scores, sorted_ood_odin_scores_indices = torch.sort(ood_odin_scores)
-
-    sorted_odin_scores, sorted_odin_scores_indices = torch.sort(scores)
-    ood_ranks_in_sorted_ood_scores = len(sorted_odin_scores) - 1 - torch.searchsorted(sorted_odin_scores, sorted_ood_odin_scores)
-
+    # anomaly_scores_convs ranks plot
     plt.figure()
-    plt.plot(list(range(len(ood_ranks_in_sorted_ood_scores))), torch.sort(ood_ranks_in_sorted_ood_scores)[0])
-    plt.xlabel('OOD ranks in ODIN scores')
-    plt.ylabel('all samples ODIN rank')
+    anomaly_scores_conv = torch.tensor(anomaly_scores_conv)
+    # abnormal_anomaly_scores_conv = anomaly_scores_conv[[label in abnormal_labels for label in labels]]
+    # sorted_abnormal_anomaly_scores_conv, sorted_abnormal_anomaly_scores_conv_indices = torch.sort(abnormal_anomaly_scores_conv)
+
+    sorted_all_anomaly_scores_conv, sorted_all_anomaly_scores_conv_indices = torch.sort(anomaly_scores_conv)
+    # abnormal_ranks_in_sorted_anomaly_scores_conv = len(sorted_all_anomaly_scores_conv) - 1 - torch.searchsorted(sorted_all_anomaly_scores_conv, sorted_abnormal_anomaly_scores_conv)
+    for OOD_label in abnormal_labels:
+        if OOD_label not in labels:
+            continue
+        curr_label_anomaly_scores_conv = anomaly_scores_conv[labels == OOD_label]
+        curr_label_sorted_anomaly_scores_conv, curr_label_anomaly_scores_conv_indices = torch.sort(
+            curr_label_anomaly_scores_conv)
+        curr_label_ranks_in_all_anomaly_scores = len(
+            sorted_all_anomaly_scores_conv) - 1 - torch.searchsorted(sorted_all_anomaly_scores_conv,
+                                                                    curr_label_sorted_anomaly_scores_conv)
+        plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
+                 torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
+                 label=labels_to_classes_names[OOD_label])
+
+    # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores_conv))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores_conv)[0])
+    plt.xlabel(f'OOD ranks in anomaly detection summation scores')
+    plt.ylabel(f'all samples anomaly detection summation scores rank')
     plt.title('OOD rank')
     plt.yscale('log')
     plt.grid(True)
-    plt.savefig(path + f"/OOD_ranks_in_odin_scores.pdf")
-    # plt.show()
+    plt.legend()
+    plt.savefig(path + f"/OOD_ranks_in_anomaly_detection_summation_scores.pdf")
 
 
 def print_ood_id_outcomes(all_preds, labels, labels_to_classes_names, logger):
