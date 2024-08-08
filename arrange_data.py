@@ -213,13 +213,17 @@ def calculate_area_size_statistics_for_each_class(train_dataloader, val_dataload
             print(f"Class {train_dataloader.dataset.METAINFO['classes'][int(label)]}: median area size: {median}", file=file)
 
     class_names = [train_dataloader.dataset.METAINFO['classes'][int(label)] for label in areas_dict.keys()]
+    medians_for_bbox = {label: np.median(areas) for label, areas in areas_dict.items()}
+    sorted_areas_dict = {k: v for k, v in sorted(areas_dict.items(), key=lambda item: medians_for_bbox[item[0]])}
+    sorted_class_names = [train_dataloader.dataset.METAINFO['classes'][int(label)] for label in
+                          sorted_areas_dict.keys()]
     plt.figure(figsize=(10, 10))
-    plt.boxplot(list(areas_dict.values()), patch_artist=True)
+    plt.boxplot(list(sorted_areas_dict.values()), patch_artist=True)
     plt.title('Average area size statistics for each class')
     plt.xlabel('Classes')
     plt.ylabel('Area means [$meter^2$]')
     plt.yscale('log')
-    plt.xticks(list(range(1, len(areas_dict)+1)), class_names, rotation=90)
+    plt.xticks(list(range(1, len(sorted_areas_dict)+1)), sorted_class_names, rotation=90)
     plt.grid(True, linestyle='--')
     plt.tight_layout()
     plt.savefig(
@@ -279,9 +283,9 @@ def main():
     split_train_to_train_and_val_datasets(train_dataset_path)
 
 if __name__ == '__main__':
-    main()
-    # cfg = Config.fromfile("./configs/experiment_2/config.py")
-    # anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
-    # calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
-    #                           val_dataloader=anomaly_detector_cfg.val_dataloader,
-    #                           test_dataloader=anomaly_detector_cfg.test_dataloader)
+    # main()
+    cfg = Config.fromfile("./configs/experiment_2/config.py")
+    anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
+    calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
+                              val_dataloader=anomaly_detector_cfg.val_dataloader,
+                              test_dataloader=anomaly_detector_cfg.test_dataloader)

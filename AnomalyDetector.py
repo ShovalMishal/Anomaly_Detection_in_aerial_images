@@ -256,7 +256,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
             with open(self.hashmap_locations_and_anomaly_scores_test_file, 'w') as f:
                 json.dump(hashmap_locations_and_anomaly_scores_test, f, indent=4)
-            self.plot_ranks_graph_after_AD_stage()
+            self.plot_ranks_graph_and_tt1_after_AD_stage()
         if self.evaluate_stage:
             self.test_with_and_without_regressor()
     def test_with_and_without_regressor(self):
@@ -317,7 +317,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                           wait_time=0,
                                           draw_text=False)
 
-    def plot_ranks_graph_after_AD_stage(self):
+    def plot_ranks_graph_and_tt1_after_AD_stage(self):
         all_labels = []
         all_AD_socres = []
         for batch in tqdm(self.test_dataloader):
@@ -334,9 +334,11 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                 all_AD_socres.extend(scores_dict['patches_scores'])
 
         all_AD_socres = torch.tensor(all_AD_socres)
-        all_labels= torch.tensor(all_labels)
+        all_labels = torch.tensor(all_labels)
         sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(all_AD_socres)
-        ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(word) for word in self.test_dataloader.dataset.ood_labels]
+        ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(label) for label in self.test_dataloader.dataset.ood_labels]
+        tt1 = {}
+        AD_ranks_dict = {}
         for OOD_label in ood_labels:
             if OOD_label not in all_labels:
                 continue
@@ -349,6 +351,12 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
                      torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
                      label=self.test_dataloader.dataset.METAINFO['classes'][OOD_label])
+            tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = \
+            torch.sort(curr_label_ranks_in_all_anomaly_scores)[0][0]
+            self.logger.info(
+                f"OOD label {self.test_dataloader.dataset.METAINFO['classes'][OOD_label]} first rank in AD"
+                f" scores: {tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]]}")
+            AD_ranks_dict[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = list(torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
 
             # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
         plt.xlabel(f'abnormal objects ranks in anomaly detection scores')
@@ -358,6 +366,22 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         plt.grid(True)
         plt.legend()
         plt.savefig(os.path.join(self.test_output_dir, f"abnormal_ranks_in_anomaly_detection_scores.pdf"))
+
+        sorted_data = sorted(tt1.items(), key=lambda x: x[1])
+        classes_names, first_rank = zip(*sorted_data)
+        fig = plt.figure(figsize=(10, 5))
+        plt.bar(classes_names, first_rank, width=0.4)
+        plt.xlabel("novel classes")
+        plt.ylabel("TIme to first")
+        plt.title("Time to first (TT-1) for novel classes")
+        plt.grid(True)
+        plt.yscale('log')
+        plt.xticks(rotation=90)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.test_output_dir, f"TT-1.pdf"))
+
+        with open(os.path.join(self.test_output_dir, "AD_ranks_dict.json"), 'w') as f:
+            json.dump(AD_ranks_dict, f, indent=4)
 
 
 def retrieve_anomaly_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anomaly_scores_test_file):

@@ -7,8 +7,8 @@ from mmengine.config import Config
 
 from AnomalyDetector import VitBasedAnomalyDetector, retrieve_anomaly_scores_for_test_dataset
 from Classifier import VitClassifier, ResNet18Classifier
-from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, rank_samples_accord_features, \
-    MSPOODDetector
+from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, \
+    rank_samples_accord_features, MSPOODDetector, save_TT_1_images
 from Classifier import create_dataloaders, DatasetType
 from results import plot_graphs
 from utils import create_logger
@@ -85,17 +85,28 @@ class FullODDPipeline:
                 labels = torch.tensor(data['labels'])
                 preds = torch.tensor(data['preds'])
 
-        anomaly_scores, anomaly_scores_conv = retrieve_anomaly_scores_for_test_dataset(test_dataloader,
-                                                                  self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file)
+        # save_TT_1_images(all_scores=scores, all_labels=labels, dataloader=test_dataloader,
+        #                  path=self.OOD_detector.test_output, logger=self.logger,
+        #                  abnormal_labels=list(test_dataloader.dataset.ood_classes.values()),
+        #                  hashmap_locations_and_anomaly_scores_test_file=self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file,
+        #                  visualizer=self.anomaly_detector.bbox_regressor_runner.visualizer,
+        #                  test_dataset=self.anomaly_detector.test_dataloader.dataset)
+
+        # show_objects_misclassifed_by_the_dataset(all_scores=scores, dataloader=test_dataloader,
+        #                  path=self.OOD_detector.test_output, logger=self.logger,
+        #                  hashmap_locations_and_anomaly_scores_test_file=self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file,
+        #                  visualizer=self.anomaly_detector.bbox_regressor_runner.visualizer,
+        #                  test_dataset=self.anomaly_detector.test_dataloader.dataset)
 
         if self.OOD_detector_cfg.save_outliers:
             save_k_outliers(all_scores=scores, all_labels=labels, dataloader=test_dataloader,
                             outliers_path=self.OOD_detector.outliers_path, k=self.OOD_detector_cfg.num_of_outliers,
                             logger=self.logger)
 
+        anomaly_scores, anomaly_scores_conv = retrieve_anomaly_scores_for_test_dataset(test_dataloader,
+                                                                  self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file)
 
-
-        _, _, eer_threshold= plot_graphs(scores=scores, anomaly_scores=anomaly_scores,
+        _, _, eer_threshold = plot_graphs(scores=scores, anomaly_scores=anomaly_scores,
                                          anomaly_scores_conv=anomaly_scores_conv, labels=labels,
                                          path=self.OOD_detector.test_output, title="OOD stage",
                                          abnormal_labels=list(test_dataloader.dataset.ood_classes.values()),

@@ -590,6 +590,9 @@ for (model_name, model_methods), marker_symbol in zip(results_dict.items(), mode
             if f"{model_label} {method_label}" not in seen_labels:
                 plt.scatter(mean_ap, mean_auc, label=f"{model_label} {method_label}", marker=marker_symbol, c=curr_color)
                 seen_labels.add(f"{model_label} {method_label}")
+            elif model_label == 'dino vit base' and method_label == 'class token self attention' and stage == 'head_9':
+                plt.scatter(mean_ap, mean_auc, label=f"{model_label} {method_label} {stage}", marker=marker_symbol,
+                            c='yellow', s=100, edgecolors='black')
             else:
               plt.scatter(mean_ap, mean_auc, marker=marker_symbol, c=curr_color)
 mean_ap_pixels_based = pixels_based_alg['mean_ap']
