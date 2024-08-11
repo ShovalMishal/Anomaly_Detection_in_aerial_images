@@ -42,6 +42,11 @@ if torch.cuda.is_available():
 from mmdet.registry import MODELS, TASK_UTILS
 
 
+def create_padding_mask(image_path, padding_value):
+    orig_img = cv2.imread(image_path)
+    mask = np.all(orig_img == padding_value, axis=-1)
+    return mask
+
 class AnomalyDetector:
     """Abstract class of anomaly detector. It receives output dir path, dataset configuration and embedder configuration"""
 
@@ -135,6 +140,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                         continue
                     img = input
                     heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img)
+                    padding_mask = create_padding_mask(image_path=data_sample.img_path, padding_value=[104, 116, 124])
                     predicted_patches, _, patches_scores_conv, patches_scores = extract_patches_accord_heatmap(heatmap=heatmap,
                                                                              img_id=data_sample.img_id,
                                                                              patch_size=self.proposals_sizes['square'],
@@ -142,7 +148,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                              threshold_percentage=
                                                                              self.patches_filtering_threshold,
                                                                              target_dir=target_dir,
-                                                                             image_path=data_sample.img_path)
+                                                                             image_path=data_sample.img_path,
+                                                                             padding_mask=padding_mask)
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
                     if target_dir == self.test_target_dir:

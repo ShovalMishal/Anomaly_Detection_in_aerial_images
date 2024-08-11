@@ -168,7 +168,9 @@ def copy_files_according_to_horizontal_dataset():
 
 
 def calculate_area_size_statistics_for_each_class(train_dataloader, val_dataloader, test_dataloader):
-    pixel_to_meter_squared_factor = 4
+    meter_to_pixel = 0.4
+    pixel_to_meter_squared_factor = meter_to_pixel ** 2
+
     save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/area_size_statistics.json"
     sizes_file_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/classes_sizes.txt"
     train_dataloader = create_dataloader(train_dataloader)
@@ -179,17 +181,17 @@ def calculate_area_size_statistics_for_each_class(train_dataloader, val_dataload
         for i in range(len(train_dataloader.dataset)):
             for area, label in zip(train_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    train_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
+                areas_dict[int(label)].append(area*pixel_to_meter_squared_factor)
 
         for i in range(len(val_dataloader.dataset)):
             for area, label in zip(val_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    val_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
+                areas_dict[int(label)].append(area*pixel_to_meter_squared_factor)
 
         for i in range(len(test_dataloader.dataset)):
             for area, label in zip(test_dataloader.dataset[i]['data_samples'].gt_instances.bboxes.areas.numpy(),
                                    test_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy()):
-                areas_dict[int(label)].append(area/pixel_to_meter_squared_factor)
+                areas_dict[int(label)].append(area*pixel_to_meter_squared_factor)
 
         with open(save_path, 'w') as file:
             json.dump(areas_dict, file, indent=4)
@@ -258,7 +260,7 @@ def calculate_area_size_statistics_for_each_class(train_dataloader, val_dataload
     plt.figure(figsize=(10, 10))
     plt.scatter(list(range(len(medians))), medians)
     plt.xlabel('Classes')
-    plt.ylabel('Area meidans [meters^2]')
+    plt.ylabel('Area medians [meters^2]')
     plt.yscale('log')
     plt.tight_layout()
     plt.xticks(list(range(len(medians))), class_names, rotation=90)
@@ -283,9 +285,9 @@ def main():
     split_train_to_train_and_val_datasets(train_dataset_path)
 
 if __name__ == '__main__':
-    # main()
-    cfg = Config.fromfile("./configs/experiment_2/config.py")
-    anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
-    calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
-                              val_dataloader=anomaly_detector_cfg.val_dataloader,
-                              test_dataloader=anomaly_detector_cfg.test_dataloader)
+    main()
+    # cfg = Config.fromfile("./configs/experiment_2/config.py")
+    # anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
+    # calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
+    #                           val_dataloader=anomaly_detector_cfg.val_dataloader,
+    #                           test_dataloader=anomaly_detector_cfg.test_dataloader)
