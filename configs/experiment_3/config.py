@@ -6,7 +6,7 @@ ood_class_names = ['plane', 'baseball-diamond', 'bridge', 'ground-track-field',
                    'small-vehicle', 'large-vehicle', 'ship', 'tennis-court',
                    'basketball-court', 'soccer-ball-field', 'roundabout',
                    'swimming-pool', 'helicopter', 'container-crane', 'airport',
-                   'helipad']
+                   'helipad', 'storage-tank']
 
 anomaly_detector_cfg = dict(
     train_dataloader=dict(
@@ -300,7 +300,7 @@ anomaly_detector_cfg = dict(
                 in_channels=768,
                 fc_out_channels=1024,
                 roi_feat_size=7,
-                num_classes=2,
+                num_classes=1,
                 reg_predictor_cfg=dict(type='mmdet.Linear'),
                 cls_predictor_cfg=dict(type='mmdet.Linear'),
                 bbox_coder=dict(

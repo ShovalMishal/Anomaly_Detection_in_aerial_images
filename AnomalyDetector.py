@@ -18,7 +18,7 @@ from single_image_bg_detector.bg_subtraction_with_dino_vit import BGSubtractionW
 from DOTA_devkit.DOTA import DOTA
 from single_image_bg_detector.bg_subtractor_utils import (extract_patches_accord_heatmap, \
                                                           assign_predicted_boxes_to_gt_boxes_and_save_val_stage, \
-                                                          assign_predicted_boxes_to_gt_boxes_and_save)
+                                                          assign_predicted_boxes_to_gt_boxes_and_save, save_id_gts)
 from utils import create_dataloader
 from mmdet.registry import TASK_UTILS
 from mmengine.structures import InstanceData
@@ -67,7 +67,8 @@ class AnomalyDetector:
         self.output_dir_train_dataset = os.path.join(self.data_output_dir, "train")
         self.output_dir_val_dataset = os.path.join(self.data_output_dir, "val")
         self.output_dir_test_dataset = os.path.join(self.data_output_dir, "test")
-        self.hashmap_locations_and_anomaly_scores_test_file = os.path.join(self.output_dir_test_dataset, "hash_map_locations_and_anomaly_scores_test_dataset.json")
+        self.hashmap_locations_and_anomaly_scores_test_file = os.path.join(self.output_dir_test_dataset,
+                                                                           "hash_map_locations_and_anomaly_scores_test_dataset.json")
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
         self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
 
@@ -78,7 +79,8 @@ class AnomalyDetector:
 class VitBasedAnomalyDetector(AnomalyDetector):
     # extract patches and save them according to their assigned labels
     def __init__(self, anomaly_detector_cfg, output_dir, logger, current_run_name):
-        super().__init__(output_dir=output_dir, anomaly_detector_cfg=anomaly_detector_cfg, logger=logger, current_run_name=current_run_name)
+        super().__init__(output_dir=output_dir, anomaly_detector_cfg=anomaly_detector_cfg, logger=logger,
+                         current_run_name=current_run_name)
         self.logger.info(f"Creating anomaly detector\n")
         self.dota_obj_train = DOTA(basepath=anomaly_detector_cfg.train_dataloader.dataset.data_root)
         self.dota_obj_val = DOTA(basepath=anomaly_detector_cfg.val_dataloader.dataset.data_root)
@@ -132,7 +134,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         val_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.val_dataloader)
         test_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.test_dataloader)
         for dataloader, target_dir in zip([train_dataloader, val_dataloader, test_dataloader],
-        [self.train_target_dir, self.val_target_dir, self.test_target_dir]):
+                                          [self.train_target_dir, self.val_target_dir, self.test_target_dir]):
             for batch in tqdm(dataloader):
                 for input, data_sample in zip(batch['inputs'], batch['data_samples']):
                     save_path = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
@@ -141,15 +143,17 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                     img = input
                     heatmap = self.dino_vit_bg_subtractor.run_on_image_tensor(img)
                     padding_mask = create_padding_mask(image_path=data_sample.img_path, padding_value=[104, 116, 124])
-                    predicted_patches, _, patches_scores_conv, patches_scores = extract_patches_accord_heatmap(heatmap=heatmap,
-                                                                             img_id=data_sample.img_id,
-                                                                             patch_size=self.proposals_sizes['square'],
-                                                                             plot=False,
-                                                                             threshold_percentage=
-                                                                             self.patches_filtering_threshold,
-                                                                             target_dir=target_dir,
-                                                                             image_path=data_sample.img_path,
-                                                                             padding_mask=padding_mask)
+                    predicted_patches, _, patches_scores_conv, patches_scores = (extract_patches_accord_heatmap
+                                                                                 (heatmap=heatmap,
+                                                                                  img_id=data_sample.img_id,
+                                                                                  patch_size=self.proposals_sizes[
+                                                                                      'square'],
+                                                                                  plot=False,
+                                                                                  threshold_percentage=
+                                                                                  self.patches_filtering_threshold,
+                                                                                  target_dir=target_dir,
+                                                                                  image_path=data_sample.img_path,
+                                                                                  padding_mask=padding_mask))
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
                     if target_dir == self.test_target_dir:
@@ -193,10 +197,13 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         if not self.skip_stage:
             self.logger.info(f"Anomaly detection - train dataset\n")
             self.bbox_regressor_runner.visualizer.dataset_meta = self.train_dataloader.dataset.METAINFO
+            id_labels = [label_index for label_index, label in
+                         enumerate(self.classes_names) if label not in self.train_dataloader.dataset.ood_labels]
             for batch in tqdm(self.train_dataloader):
                 for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                     # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(device)
+                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
+                        device)
                     regressor_results = self.bbox_regressor_runner.model.predict(
                         data_inputs.unsqueeze(dim=0).to(device), [data_sample])
                     assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
@@ -210,11 +217,18 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 target_dir=self.train_target_dir,
                                                                 extract_bbox_path=self.output_dir_train_dataset,
                                                                 visualizer=self.bbox_regressor_runner.visualizer)
+
+                    # inject ID gts
+                    save_id_gts(gt_instances=data_sample.gt_instances, image_path=data_sample.img_path,
+                                id_classes_names=[self.classes_names[i] for i in id_labels],
+                                extract_bbox_path=self.output_dir_train_dataset,
+                                id_class_labels=id_labels, logger=self.logger, img_id=data_sample.img_id)
             self.logger.info(f"Anomaly detection - val dataset\n")
             for batch in tqdm(self.val_dataloader):
                 for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                     # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(device)
+                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
+                        device)
                     regressor_results = self.bbox_regressor_runner.model.predict(
                         data_inputs.unsqueeze(dim=0).to(device), [data_sample])
                     assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
@@ -238,7 +252,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             for batch in tqdm(self.test_dataloader):
                 for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                     # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(device)
+                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
+                        device)
                     regressor_results = self.bbox_regressor_runner.model.predict(
                         data_inputs.unsqueeze(dim=0).to(device), [data_sample])
                     curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
@@ -260,12 +275,12 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                 hashmap_locations=hashmap_locations_and_anomaly_scores_test,
                                                                 scores_dict=scores_dict)
 
-
             with open(self.hashmap_locations_and_anomaly_scores_test_file, 'w') as f:
                 json.dump(hashmap_locations_and_anomaly_scores_test, f, indent=4)
             self.plot_ranks_graph_and_tt1_after_AD_stage()
         if self.evaluate_stage:
             self.test_with_and_without_regressor()
+
     def test_with_and_without_regressor(self):
         self.logger.info(f"Anomaly detection - Evaluate regressor\n")
         self.bbox_regressor_runner.test()
@@ -343,7 +358,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         all_AD_socres = torch.tensor(all_AD_socres)
         all_labels = torch.tensor(all_labels)
         sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(all_AD_socres)
-        ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(label) for label in self.test_dataloader.dataset.ood_labels]
+        ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(label) for label in
+                      self.test_dataloader.dataset.ood_labels]
         tt1 = {}
         AD_ranks_dict = {}
         for OOD_label in ood_labels:
@@ -359,11 +375,12 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                      torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
                      label=self.test_dataloader.dataset.METAINFO['classes'][OOD_label])
             tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = \
-            torch.sort(curr_label_ranks_in_all_anomaly_scores)[0][0]
+                torch.sort(curr_label_ranks_in_all_anomaly_scores)[0][0]
             self.logger.info(
                 f"OOD label {self.test_dataloader.dataset.METAINFO['classes'][OOD_label]} first rank in AD"
                 f" scores: {tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]]}")
-            AD_ranks_dict[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = list(torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
+            AD_ranks_dict[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = list(
+                torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
 
             # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
         plt.xlabel(f'abnormal objects ranks in anomaly detection scores')
