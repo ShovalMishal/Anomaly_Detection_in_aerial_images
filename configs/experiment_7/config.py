@@ -1,11 +1,12 @@
 """This config is originally from OpenMMLab: <link to github>"""
 runai_run = False
 output_dir = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/" if not runai_run else "/storage/shoval/Anomaly_Detection_in_aerial_images/results/"
-current_run_name = "experiment_6"
+current_run_name = "experiment_7"
 ood_class_names = ['plane', 'baseball-diamond', 'bridge', 'ground-track-field',
-                   'ship', 'tennis-court', 'basketball-court', 'storage-tank',
-                   'soccer-ball-field', 'roundabout', 'harbor', 'small-vehicle',
-                   'helicopter', 'airport', 'helipad', 'container-crane', 'large-vehicle']
+                   'small-vehicle', 'large-vehicle', 'ship', 'tennis-court',
+                   'basketball-court', 'soccer-ball-field', 'roundabout',
+                   'swimming-pool', 'helicopter', 'container-crane', 'airport',
+                   'helipad', 'harbor']
 
 anomaly_detector_cfg = dict(
     train_dataloader=dict(
@@ -18,7 +19,7 @@ anomaly_detector_cfg = dict(
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
             type='DOTAv2Dataset',
-            data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/train' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/train',
+            data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/train' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/train',
             ann_file='labelTxt/',
             data_prefix=dict(img_path='images/'),
             ood_labels=ood_class_names,
@@ -49,7 +50,7 @@ anomaly_detector_cfg = dict(
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
             type='DOTAv2Dataset',
-            data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/val' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/val',
+            data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/val' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/val',
             ann_file='labelTxt/',
             data_prefix=dict(img_path='images/'),
             ood_labels=ood_class_names,
@@ -80,7 +81,7 @@ anomaly_detector_cfg = dict(
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
             type='DOTAv2Dataset',
-            data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
+            data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
             ann_file='labelTxt/',
             data_prefix=dict(img_path='images/'),
             ood_labels=ood_class_names,
@@ -142,8 +143,8 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD6',
-                data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/train' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/train',
+                type='DOTAv2DatasetOOD7',
+                data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/train' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/train',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
                 ood_labels=ood_class_names,
@@ -171,8 +172,8 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD6',
-                data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/val' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/val',
+                type='DOTAv2DatasetOOD7',
+                data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/val' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/val',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
                 ood_labels=ood_class_names,
@@ -200,8 +201,8 @@ anomaly_detector_cfg = dict(
             drop_last=False,
             sampler=dict(type='DefaultSampler', shuffle=False),
             dataset=dict(
-                type='DOTAv2DatasetOOD6',
-                data_root='/home/shoval/Documents/Repositories/data/gsd_055_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
+                type='DOTAv2DatasetOOD7',
+                data_root='/home/shoval/Documents/Repositories/data/gsd_08_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
                 ann_file='labelTxt/',
                 data_prefix=dict(img_path='images/'),
                 ood_labels=ood_class_names,
@@ -246,7 +247,7 @@ anomaly_detector_cfg = dict(
                 start_factor=0.3333333333333333,
                 by_epoch=False,
                 begin=0,
-                end=150),
+                end=115),
             dict(
                 type='MultiStepLR',
                 begin=0,
@@ -339,5 +340,5 @@ classifier_cfg = dict(type="resnet18",
                       evaluate=True)
 
 OOD_detector_cfg = dict(type="ODIN",
-                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=100,
+                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=50,
                         rank_accord_features=True)
