@@ -125,16 +125,20 @@ def create_dataloaders(train_transforms, val_transforms, data_paths, dataset_typ
     return train_dataloader, val_dataloader, test_dataloader
 
 
-class ResNet18Classifier(Classifier):
+class ResNetClassifier(Classifier):
     def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
         super().__init__(output_dir, classifier_cfg, logger, current_run_name)
 
     def get_resnet_transforms(self):
+        if self.classifier_cfg.type == "resnet18":
+            resize=32
+        else:
+            resize = 224
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         self.train_transforms = Compose([
             # transforms.ToPILImage(),
-            Resize((32, 32)),
+            Resize((resize, resize)),
             RandomHorizontalFlip(),
             RandomVerticalFlip(),
             ToTensor(),
@@ -142,7 +146,7 @@ class ResNet18Classifier(Classifier):
         ])
 
         self.val_transforms = Compose([
-            Resize((32, 32)),
+            Resize((resize, resize)),
             ToTensor(),
             Normalize(mean, std)
         ])
@@ -165,8 +169,10 @@ class ResNet18Classifier(Classifier):
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 print(k, v.shape)
-
-        assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, 32, 32)
+        if self.classifier_cfg.type == "resnet18":
+            assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, 32, 32)
+        else:
+            assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, 224, 224)
         assert batch['labels'].shape == (self.classifier_cfg.train_batch_size,)
 
 
@@ -177,6 +183,7 @@ class ResNet18Classifier(Classifier):
                                checkpoint=self.checkpoint_path,
                                log_dir=self.train_output_dir,
                                logger=self.logger,
+                               net_type=self.classifier_cfg.type,
                                resume=self.classifier_cfg.resume,
                                max_epoch=self.classifier_cfg.max_epoch,
                                milestones=self.classifier_cfg.milestones,
@@ -184,7 +191,7 @@ class ResNet18Classifier(Classifier):
 
     def get_fine_tuned_model(self):
         args = SimpleNamespace()
-        args.net = "resnet18"
+        args.net = self.classifier_cfg.type
         args.gpu = True
         args.num_classes = len(self.in_dist_train_dataloader.dataset.classes)
         model = get_network(args=args)

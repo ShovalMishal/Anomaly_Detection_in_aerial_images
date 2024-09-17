@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-file = open('/home/shoval/Documents/Repositories/LOST/ranks_dict.json')
+file = open('/home/shoval/Documents/Repositories/CutLER/cutler/output/ranks_dict_dota_gsd_10.json')
 data = json.load(file)
 tt1 = []
 for key, value in data.items():
@@ -35,7 +35,7 @@ bars1 = ax.bar(x - width/2, tt1, width, color='green')
 # Add text for labels, title, and custom x-axis tick labels, etc.
 ax.set_ylabel(r'TT- $1^{st}$ [#samples]')
 #ax.set_xlabel('Novel Class')
-ax.set_title(r'TT- $1^{st}$ for LOST')
+ax.set_title(r'TT- $1^{st}$ for cutler')
 ax.set_xticks(x)
 ax.set_xticklabels(categories, rotation=45, ha='right')
 ax.set_yscale('log')
@@ -60,4 +60,4 @@ ax.yaxis.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 # Show plot
 plt.tight_layout()
-plt.savefig('../figures_for_paper/tt1_lost_gsd02.pdf')
+plt.savefig('/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results_for_paper/tt1s/tt1_cutler_gsd_10.pdf')

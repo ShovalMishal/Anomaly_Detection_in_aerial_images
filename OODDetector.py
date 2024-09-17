@@ -2,7 +2,9 @@ import json
 import os
 import pickle
 import shutil
+from collections import defaultdict
 
+from mmdet.registry import TASK_UTILS
 import cv2
 import torch
 import numpy as np
@@ -40,74 +42,44 @@ class OODDetector:
         os.makedirs(self.test_output, exist_ok=True)
 
     def score_samples(self, dataloader, save_outliers=False):
-        all_scores = []
-        all_labels = []
-        all_preds = []
+        save_data = defaultdict(dict)
         cache_dir = os.path.join(self.test_output, f"{self.ood_type}_scores")
         os.makedirs(cache_dir, exist_ok=True)
         next_cache_index = 0
         for batch_ind, batch in tqdm(enumerate(dataloader)):
+            img_names = [os.path.basename(path).split('.')[0] for path in batch['path']]
             images = batch['pixel_values']
             labels = batch['labels']
             curr_cache_index = batch_ind // 1000
-            curr_cache_file = os.path.join(cache_dir, f'all_scores_cache_{curr_cache_index}.pkl')
+            curr_cache_file = os.path.join(cache_dir, f'all_cache_{curr_cache_index}.pkl')
             if os.path.exists(curr_cache_file):
                 next_cache_index = curr_cache_index + 1
                 continue
 
             if curr_cache_index != next_cache_index:
                 print(next_cache_index)
-                with open(os.path.join(cache_dir, f'all_scores_cache_{next_cache_index}.pkl'), 'wb') as f:
-                    pickle.dump(all_scores, f)
-                with open(os.path.join(cache_dir, f'all_labels_cache_{next_cache_index}.pkl'), 'wb') as f:
-                    pickle.dump(all_labels, f)
-                with open(os.path.join(cache_dir, f'all_preds_cache_{next_cache_index}.pkl'), 'wb') as f:
-                    pickle.dump(all_preds, f)
-                all_scores = []
-                all_labels = []
-                all_preds = []
+                with open(os.path.join(cache_dir, f'all_cache_{next_cache_index}.pkl'), 'wb') as f:
+                    pickle.dump(save_data, f)
+                save_data = defaultdict(dict)
                 next_cache_index = curr_cache_index
 
             scores, pred_labels = self.calculate_method_scores(images.to(device))
-            all_scores.append(scores)
-            all_labels.append(labels)
-            all_preds.append(pred_labels)
+            save_data.update({img_name: {"score": score.item(), "label": label.item(), "pred": pred.item()} for score, label, pred, img_name in zip(scores, labels, pred_labels, img_names)})
 
         # cache leftovers:
-        curr_cache_file = os.path.join(cache_dir, f'all_scores_cache_{curr_cache_index}.pkl')
+        curr_cache_file = os.path.join(cache_dir, f'all_cache_{curr_cache_index}.pkl')
         if not os.path.exists(curr_cache_file):
-            with open(os.path.join(cache_dir, f'all_scores_cache_{curr_cache_index}.pkl'), 'wb') as f:
-                pickle.dump(all_scores, f)
-            with open(os.path.join(cache_dir, f'all_labels_cache_{curr_cache_index}.pkl'), 'wb') as f:
-                pickle.dump(all_labels, f)
-            with open(os.path.join(cache_dir, f'all_preds_cache_{curr_cache_index}.pkl'), 'wb') as f:
-                pickle.dump(all_preds, f)
+            with open(os.path.join(cache_dir, f'all_cache_{curr_cache_index}.pkl'), 'wb') as f:
+                pickle.dump(save_data, f)
 
-        all_scores_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_scores_cache_')]
-        all_scores_caches.sort(key=lambda x: int(x.split('all_scores_cache_')[-1].split('.pkl')[0]))
-        all_scores = []
-        for cache_name in all_scores_caches:
+        all_cache = defaultdict(lambda: {"score": None, "label": None, "pred": None})
+        all_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_cache_')]
+        all_caches.sort(key=lambda x: int(x.split('all_cache_')[-1].split('.pkl')[0]))
+        for cache_name in all_caches:
             with open(os.path.join(cache_dir, cache_name), 'rb') as f:
-                all_scores.append(pickle.load(f))
-        all_scores = sum(all_scores, [])
+                all_cache.update(pickle.load(f))
 
-        all_labels_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_labels_cache_')]
-        all_labels_caches.sort(key=lambda x: int(x.split('all_labels_cache_')[-1].split('.pkl')[0]))
-        all_labels = []
-        for cache_name in all_labels_caches:
-            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
-                all_labels.append(pickle.load(f))
-        all_labels = sum(all_labels, [])
-
-        all_preds_caches = [x for x in os.listdir(cache_dir) if x.startswith('all_preds_cache_')]
-        all_preds_caches.sort(key=lambda x: int(x.split('all_preds_cache_')[-1].split('.pkl')[0]))
-        all_preds = []
-        for cache_name in all_preds_caches:
-            with open(os.path.join(cache_dir, cache_name), 'rb') as f:
-                all_preds.append(pickle.load(f))
-        all_preds = sum(all_preds, [])
-
-        return torch.cat(all_scores, dim=0), torch.cat(all_labels, dim=0), torch.cat(all_preds, dim=0)
+        return all_cache
 
     def train(self):
         pass
@@ -351,7 +323,9 @@ def show_objects_misclassifed_by_the_dataset(all_scores, dataloader, path, logge
             logger.info(f"Original rank is {sample_rank} for image {original_image_name}\n")
 
 
-def save_k_outliers(all_scores, all_labels, dataloader, outliers_path, k=50, logger=None):
+def save_k_outliers(all_cache, dataloader, outliers_path, k=50, logger=None):
+    all_scores = torch.tensor([img_prop["score"] for img_name, img_prop in all_cache.items()])
+    all_labels = torch.tensor([img_prop["label"] for img_name, img_prop in all_cache.items()])
     labels_to_classes_names = dataloader.dataset.labels_to_classes_names
     # Define the transform to unnormalize the image for resnet18 dataloaders
     save_path = os.path.join(outliers_path, f"{k}_lowest_scores_bg_patches")

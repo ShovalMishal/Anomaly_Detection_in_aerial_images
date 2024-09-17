@@ -82,7 +82,7 @@ def is_valid_file_wrapper(path_to_exclusion_file):
 def create_dataloader(dataloader_cfg):
     dataloader_cfg = copy.deepcopy(dataloader_cfg)
     dataloader_cfg["dataset"]["_scope_"] = "mmrotate"
-    data_loader = Runner.build_dataloader(dataloader_cfg, seed=123456)
+    data_loader = Runner.build_dataloader(dataloader_cfg)
     return data_loader
 
 
@@ -239,6 +239,26 @@ def plot_outliers_images():
     plt.subplots_adjust(wspace=0.3, hspace=1)
     # Show the plot
     plt.savefig(os.path.dirname(folder_path) + "/50_highest_scores_patches.jpg")
+
+
+def retrieve_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anomaly_scores_test_file, all_cache):
+    with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
+        hashmap_locations_and_anomaly_scores_test = json.load(f)
+
+    anomaly_scores = []
+    anomaly_scores_conv = []
+    ood_scores = []
+    labels = []
+    for batch_index, batch in enumerate(test_dataloader):
+        for path in batch['path']:
+            img_id = os.path.basename(path).split('.')[0]
+            curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
+            anomaly_scores.append(curr_file_data['anomaly_score'])
+            anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
+            labels.append(all_cache[img_id]['label'])
+            ood_scores.append(all_cache[img_id]['score'])
+
+    return ood_scores, labels, anomaly_scores, anomaly_scores_conv
 
 
 if __name__ == '__main__':

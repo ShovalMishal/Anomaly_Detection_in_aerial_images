@@ -1,0 +1,33 @@
+{
+    "nproc": 1,
+    "img_dirs": [
+        "/home/shoval/Documents/Repositories/data/DOTAV2/test/images"
+    ],
+    "ann_dirs": [
+        "/home/shoval/Documents/Repositories/data/DOTAV2/test/labelTxt"
+    ],
+    "metadata_dirs": [
+        "/home/shoval/Documents/Repositories/data/DOTAV2/test/meta"
+    ],
+    "sizes": [
+        1024
+    ],
+    "gaps": [
+        200
+    ],
+    "rates": [
+        2.0
+    ],
+    "img_rate_thr": 0.6,
+    "iof_thr": 0.7,
+    "no_padding": false,
+    "padding_value": [
+        104,
+        116,
+        124
+    ],
+    "save_dir": "/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test",
+    "save_ext": ".png",
+    "target_gsd": 5,
+    "normalize_gsd": true
+}

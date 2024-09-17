@@ -5,8 +5,10 @@ from argparse import ArgumentParser
 import torch
 from mmengine.config import Config
 
-from AnomalyDetector import VitBasedAnomalyDetector, retrieve_anomaly_scores_for_test_dataset
-from Classifier import VitClassifier, ResNet18Classifier
+from PrepareDataPyramid import PrepareDataPyramid
+from utils import retrieve_scores_for_test_dataset
+from AnomalyDetector import VitBasedAnomalyDetector
+from Classifier import VitClassifier, ResNetClassifier
 from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, \
     rank_samples_accord_features, MSPOODDetector, save_TT_1_images
 from Classifier import create_dataloaders, DatasetType
@@ -28,6 +30,10 @@ class FullODDPipeline:
         self.output_dir = self.cfg.output_dir
         os.makedirs(os.path.join(self.output_dir), exist_ok=True)
         self.current_run_name = self.cfg.get("current_run_name")
+        prepare_data_pyramid_cfg = self.cfg.get("prepare_data_pyramid_cfg")
+        pdp = PrepareDataPyramid(prepare_data_pyramid_cfg)
+        if not pdp.skip_stage:
+            pdp.prepare_data_pyramid()
         anomaly_detector_cfg = self.cfg.get("anomaly_detector_cfg")
         self.classifier_cfg = self.cfg.get("classifier_cfg")
         self.OOD_detector_cfg = self.cfg.get("OOD_detector_cfg")
@@ -35,8 +41,10 @@ class FullODDPipeline:
                                                  f"{self.current_run_name}_full_ood_pipeline_log.log"))
         self.anomaly_detector = {'vit_based_anomaly_detector': VitBasedAnomalyDetector}[anomaly_detector_cfg.type]
         self.anomaly_detector = self.anomaly_detector(anomaly_detector_cfg,
-                                                      self.output_dir, self.logger, self.current_run_name)
-        self.classifier = {'vit': VitClassifier, 'resnet18': ResNet18Classifier}[self.classifier_cfg.type]
+                                                      self.output_dir, self.logger, self.current_run_name,
+                                                      original_data_path=pdp.get_original_data_path(),
+                                                      lowest_gsd=pdp.get_lowest_gsd())
+        self.classifier = {'vit': VitClassifier, 'resnet50': ResNetClassifier, 'resnet18':ResNetClassifier}[self.classifier_cfg.type]
         self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger, self.current_run_name)
         self.OOD_detector = {'ODIN': ODINOODDetector, 'Energy': EnergyOODDetector, 'msp': MSPOODDetector,
                              'vim': ViMOODDetector}[self.OOD_detector_cfg.type]
@@ -73,17 +81,12 @@ class FullODDPipeline:
             use_weighted_sampler=self.classifier_cfg.weighted_sampler)
 
         if not os.path.exists(self.OOD_detector.test_dataset_scores_and_labels):
-            scores, labels, preds = self.OOD_detector.score_samples(dataloader=test_dataloader,
-                                                                               save_outliers=True)
-            labels_scores_dict = {'scores': scores.tolist(), 'labels': labels.tolist(), 'preds': preds.tolist()}
+            all_cache = self.OOD_detector.score_samples(dataloader=test_dataloader, save_outliers=True)
             with open(self.OOD_detector.test_dataset_scores_and_labels, 'w') as f:
-                json.dump(labels_scores_dict, f, indent=4)
+                json.dump(all_cache, f, indent=4)
         else:
             with open(self.OOD_detector.test_dataset_scores_and_labels, 'r') as file:
-                data = json.load(file)
-                scores = torch.tensor(data['scores'])
-                labels = torch.tensor(data['labels'])
-                preds = torch.tensor(data['preds'])
+                all_cache = json.load(file)
 
         # save_TT_1_images(all_scores=scores, all_labels=labels, dataloader=test_dataloader,
         #                  path=self.OOD_detector.test_output, logger=self.logger,
@@ -98,13 +101,16 @@ class FullODDPipeline:
         #                  visualizer=self.anomaly_detector.bbox_regressor_runner.visualizer,
         #                  test_dataset=self.anomaly_detector.test_dataloader.dataset)
 
+
         if self.OOD_detector_cfg.save_outliers:
-            save_k_outliers(all_scores=scores, all_labels=labels, dataloader=test_dataloader,
+            save_k_outliers(all_cache=all_cache, dataloader=test_dataloader,
                             outliers_path=self.OOD_detector.outliers_path, k=self.OOD_detector_cfg.num_of_outliers,
                             logger=self.logger)
 
-        anomaly_scores, anomaly_scores_conv = retrieve_anomaly_scores_for_test_dataset(test_dataloader,
-                                                                  self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file)
+        scores, labels, anomaly_scores, anomaly_scores_conv= (retrieve_scores_for_test_dataset
+                                                                               (test_dataloader,
+                                                                                self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file,
+                                                                                all_cache))
 
         _, _, eer_threshold = plot_graphs(scores=scores, anomaly_scores=anomaly_scores,
                                          anomaly_scores_conv=anomaly_scores_conv, labels=labels,

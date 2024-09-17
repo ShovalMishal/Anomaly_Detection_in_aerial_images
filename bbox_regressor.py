@@ -113,7 +113,9 @@ class BBoxRegressor(BaseModel):
                                'Only supports loss, predict and tensor mode')
 
     def predict(self, batch_inputs: Tensor, batch_data_samples: SampleList, rescale=True):
-        x, proposals_list = self.extract_feat_and_proposals(batch_inputs, batch_data_samples)
+        x, proposals_list, empty_inds = self.extract_feat_and_proposals(batch_inputs, batch_data_samples)
+        if len(empty_inds) > 0:
+            batch_data_samples = [batch_data_samples[i] for i in range(len(batch_data_samples)) if i not in empty_inds]
         assert len(proposals_list) == len(batch_data_samples)
 
         batch_img_metas = [
@@ -186,25 +188,28 @@ class BBoxRegressor(BaseModel):
     def extract_feat_and_proposals(self, batch_inputs: Tensor, batch_data_samples):
         proposals_list = []
         all_features = []
-        for img, batch_data_sample in zip(batch_inputs, batch_data_samples):
+        empty_inds = []
+        for i, (img, batch_data_sample) in enumerate(zip(batch_inputs, batch_data_samples)):
             w_featmap = img.shape[-2] // self.vit_patch_size
             h_featmap = img.shape[-1] // self.vit_patch_size
             with torch.no_grad():
                 features = self.features_extractor.get_last_block(img.unsqueeze(0))[1:, :]
             features = (features.permute(1, 0).reshape(-1, w_featmap, h_featmap).unsqueeze(dim=0))
             predicted_patches = batch_data_sample.predicted_patches.predicted_patches
+            if predicted_patches.shape[0] > 0:
+                proposals_bboxes = RotatedBoxes(
+                    RotatedBoxes(hbox2rbox(predicted_patches)).regularize_boxes(self.angle_version))
+            else:
+                empty_inds.append(i)
+                continue
             all_features.append(features)
-
-            proposals_bboxes = RotatedBoxes(
-                RotatedBoxes(hbox2rbox(predicted_patches)).regularize_boxes(self.angle_version))
             results = InstanceData()
             results.priors = proposals_bboxes
             proposals_list.append(results)
-            # del batch_data_sample.predicted_patches
 
         all_features = torch.cat(all_features, dim=0)
         x = (all_features,)
-        return x, proposals_list
+        return x, proposals_list, empty_inds
 
     def calculate_loss(self, x, proposals_list, batch_data_samples: SampleList, add_gt_as_proposals, concat=True):
         outputs = unpack_gt_instances(batch_data_samples)
@@ -248,14 +253,17 @@ class BBoxRegressor(BaseModel):
         # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
         #     with record_function("model_inference"):
         # time1 = time.time()
-        x, proposals_list = self.extract_feat_and_proposals(batch_inputs, batch_data_samples)
+        x, proposals_list, empty_inds = self.extract_feat_and_proposals(batch_inputs, batch_data_samples)
         # time2 = time.time()
         # print(f"Time to extract features and proposals: {time2 - time1}")
         # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-        assert len(proposals_list) == len(batch_data_samples)
+
         # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
         #     with record_function("model_inference"):
         # time1 = time.time()
+        if len(empty_inds) > 0:
+            batch_data_samples = [batch_data_samples[i] for i in range(len(batch_data_samples)) if i not in empty_inds]
+        assert len(proposals_list) == len(batch_data_samples)
         bbox_loss_and_target, bbox_results = self.calculate_loss(x=x, proposals_list=proposals_list,
                                                                  batch_data_samples=batch_data_samples,
                                                                  add_gt_as_proposals=add_gt_as_proposals)

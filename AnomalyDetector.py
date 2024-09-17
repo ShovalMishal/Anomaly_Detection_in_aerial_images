@@ -1,30 +1,32 @@
 import json
 import os
-
+from math import ceil
+import itertools
 import cv2
 
 import random
+from typing import Union
 
+from mmdet.structures import DetDataSample
+
+from bbox_regressor import BBoxRegressor
+from DOTA_devkit.dota_utils import parse_dota_poly
+from PIL import Image
 from matplotlib import pyplot as plt
 from mmrotate.structures import RotatedBoxes
-from mmrotate.structures.bbox import hbox2rbox
+from mmrotate.structures.bbox import hbox2rbox, qbox2rbox
 from mmrotate.evaluation import eval_rbbox_mrecall_for_regressor
 import numpy as np
 import torch
-from bbox_regressor import BBoxRegressor
 from mmengine.runner import Runner
 from tqdm import tqdm
 from single_image_bg_detector.bg_subtraction_with_dino_vit import BGSubtractionWithDinoVit
 from DOTA_devkit.DOTA import DOTA
 from single_image_bg_detector.bg_subtractor_utils import (extract_patches_accord_heatmap, \
-                                                          assign_predicted_boxes_to_gt_boxes_and_save_val_stage, \
                                                           assign_predicted_boxes_to_gt_boxes_and_save, save_id_gts)
 from utils import create_dataloader
-from mmdet.registry import TASK_UTILS
 from mmengine.structures import InstanceData
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# torch.set_seed(0)
 
 # Set a random seed for PyTorch
 seed = 42
@@ -67,8 +69,12 @@ class AnomalyDetector:
         self.output_dir_train_dataset = os.path.join(self.data_output_dir, "train")
         self.output_dir_val_dataset = os.path.join(self.data_output_dir, "val")
         self.output_dir_test_dataset = os.path.join(self.data_output_dir, "test")
+        self.hashmap_locations_and_anomaly_scores_train_file = os.path.join(self.output_dir_train_dataset,
+                                                            "hash_map_locations_and_anomaly_scores_train_dataset.json")
+        self.hashmap_locations_and_anomaly_scores_val_file = os.path.join(self.output_dir_val_dataset,
+                                                            "hash_map_locations_and_anomaly_scores_val_dataset.json")
         self.hashmap_locations_and_anomaly_scores_test_file = os.path.join(self.output_dir_test_dataset,
-                                                                           "hash_map_locations_and_anomaly_scores_test_dataset.json")
+                                                            "hash_map_locations_and_anomaly_scores_test_dataset.json")
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
         self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
 
@@ -78,7 +84,8 @@ class AnomalyDetector:
 
 class VitBasedAnomalyDetector(AnomalyDetector):
     # extract patches and save them according to their assigned labels
-    def __init__(self, anomaly_detector_cfg, output_dir, logger, current_run_name):
+    def __init__(self, anomaly_detector_cfg, output_dir, logger, current_run_name, original_data_path=None,
+                 lowest_gsd=None):
         super().__init__(output_dir=output_dir, anomaly_detector_cfg=anomaly_detector_cfg, logger=logger,
                          current_run_name=current_run_name)
         self.logger.info(f"Creating anomaly detector\n")
@@ -99,16 +106,16 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.bbox_assigner = TASK_UTILS.build(anomaly_detector_cfg.patches_assigner)
         self.proposals_sizes = anomaly_detector_cfg.proposals_sizes
         self.patches_filtering_threshold = anomaly_detector_cfg.patches_filtering_threshold
-
+        self.original_data_path = original_data_path
         self.skip_stage = anomaly_detector_cfg.skip_stage
         self.bbox_regressor_output_dir = os.path.join(self.output_dir, 'bbox_regressor')
         anomaly_detector_cfg.bbox_regressor['work_dir'] = self.bbox_regressor_output_dir
+        self.lowest_gsd = lowest_gsd
 
     def create_bbox_regressor_runner(self):
         self.anomaly_detector_cfg.bbox_regressor.train_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.anomaly_detector_cfg.bbox_regressor.val_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.anomaly_detector_cfg.bbox_regressor.test_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
-        self.anomaly_detector_cfg.bbox_regressor.train_dataloader.dataset.filter_cfg = dict(filter_empty_gt=True)
         self.bbox_regressor_runner = Runner.from_cfg(self.anomaly_detector_cfg.bbox_regressor)
         self.bbox_regressor_runner.model.initialize(logger=self.logger,
                                                     vit_patch_size=self.anomaly_detector_cfg.vit_patch_size,
@@ -156,9 +163,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                                                   padding_mask=padding_mask))
                     cache_dict = {}
                     cache_dict['predicted_patches'] = predicted_patches
-                    if target_dir == self.test_target_dir:
-                        cache_dict['patches_scores'] = patches_scores
-                        cache_dict['patches_scores_conv'] = patches_scores_conv
+                    cache_dict['patches_scores'] = patches_scores
+                    cache_dict['patches_scores_conv'] = patches_scores_conv
                     try:
                         torch.save(cache_dict, save_path)
                     except Exception as e:
@@ -175,6 +181,9 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                             "val": self.val_dataloader,
                             "test": self.test_dataloader}
         self.classes_names = self.train_dataloader.dataset.METAINFO['classes']
+        self.id_labels = [label_index for label_index, label in
+                     enumerate(self.classes_names) if label not in self.train_dataloader.dataset.ood_labels]
+        self.bbox_regressor_runner.visualizer.dataset_meta = self.train_dataloader.dataset.METAINFO
 
 
     def run(self):
@@ -191,92 +200,17 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
         self.create_bbox_regressor_runner()
         self.bbox_regressor_runner.train()
-        # self.test_with_and_without_regressor()
-
         self.initiate_dataloaders()
         if not self.skip_stage:
             self.logger.info(f"Anomaly detection - train dataset\n")
-            self.bbox_regressor_runner.visualizer.dataset_meta = self.train_dataloader.dataset.METAINFO
-            id_labels = [label_index for label_index, label in
-                         enumerate(self.classes_names) if label not in self.train_dataloader.dataset.ood_labels]
-            for batch in tqdm(self.train_dataloader):
-                for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
-                    # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
-                        device)
-                    regressor_results = self.bbox_regressor_runner.model.predict(
-                        data_inputs.unsqueeze(dim=0).to(device), [data_sample])
-                    assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
-                                                                regressor_results=regressor_results,
-                                                                gt_instances=data_sample.gt_instances,
-                                                                image_path=data_sample.img_path,
-                                                                img_id=data_sample.img_id,
-                                                                labels_names=self.classes_names,
-                                                                logger=self.logger,
-                                                                plot=False,
-                                                                target_dir=self.train_target_dir,
-                                                                extract_bbox_path=self.output_dir_train_dataset,
-                                                                visualizer=self.bbox_regressor_runner.visualizer)
+            self.save_objects_for_dataset("train")
 
-                    # inject ID gts
-                    save_id_gts(gt_instances=data_sample.gt_instances, image_path=data_sample.img_path,
-                                id_classes_names=[self.classes_names[i] for i in id_labels],
-                                extract_bbox_path=self.output_dir_train_dataset,
-                                id_class_labels=id_labels, logger=self.logger, img_id=data_sample.img_id)
             self.logger.info(f"Anomaly detection - val dataset\n")
-            for batch in tqdm(self.val_dataloader):
-                for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
-                    # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
-                        device)
-                    regressor_results = self.bbox_regressor_runner.model.predict(
-                        data_inputs.unsqueeze(dim=0).to(device), [data_sample])
-                    assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
-                                                                regressor_results=regressor_results,
-                                                                gt_instances=data_sample.gt_instances,
-                                                                image_path=data_sample.img_path,
-                                                                img_id=data_sample.img_id,
-                                                                labels_names=self.classes_names,
-                                                                logger=self.logger,
-                                                                plot=False,
-                                                                target_dir=self.val_target_dir,
-                                                                extract_bbox_path=self.output_dir_val_dataset,
-                                                                visualizer=self.bbox_regressor_runner.visualizer,
-                                                                train=False, val=True)
+            self.save_objects_for_dataset("val")
 
             self.logger.info(f"Anomaly detection - test dataset\n")
-            # saving test bounding boxes locations
-            if os.path.exists(self.hashmap_locations_and_anomaly_scores_test_file):
-                os.remove(self.hashmap_locations_and_anomaly_scores_test_file)
-            hashmap_locations_and_anomaly_scores_test = {}
-            for batch in tqdm(self.test_dataloader):
-                for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
-                    # iterate per image to save all patches
-                    data_sample.predicted_patches.predicted_patches = data_sample.predicted_patches.predicted_patches.to(
-                        device)
-                    regressor_results = self.bbox_regressor_runner.model.predict(
-                        data_inputs.unsqueeze(dim=0).to(device), [data_sample])
-                    curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
-                    with open(curr_anomaly_scores_file, 'rb') as f:
-                        scores_dict = torch.load(f)
-                        del scores_dict['predicted_patches']
-                    assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
-                                                                regressor_results=regressor_results,
-                                                                gt_instances=data_sample.gt_instances,
-                                                                image_path=data_sample.img_path,
-                                                                img_id=data_sample.img_id,
-                                                                labels_names=self.classes_names,
-                                                                logger=self.logger,
-                                                                plot=False,
-                                                                target_dir=self.test_target_dir,
-                                                                extract_bbox_path=self.output_dir_test_dataset,
-                                                                visualizer=self.bbox_regressor_runner.visualizer,
-                                                                train=False,
-                                                                hashmap_locations=hashmap_locations_and_anomaly_scores_test,
-                                                                scores_dict=scores_dict)
+            self.save_objects_for_dataset("test")
 
-            with open(self.hashmap_locations_and_anomaly_scores_test_file, 'w') as f:
-                json.dump(hashmap_locations_and_anomaly_scores_test, f, indent=4)
             self.plot_ranks_graph_and_tt1_after_AD_stage()
         if self.evaluate_stage:
             self.test_with_and_without_regressor()
@@ -407,18 +341,180 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         with open(os.path.join(self.test_output_dir, "AD_ranks_dict.json"), 'w') as f:
             json.dump(AD_ranks_dict, f, indent=4)
 
+    def apply_nms_per_image(self, image_id, predicted_boxes, scores, visualizer, iou_calculator, iou_threshold=0.5,
+                            plot=False, dataset_type="train"):
+        target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
+        boxes_num_per_subimage = [pb.shape[0] for pb in predicted_boxes]
+        predicted_boxes = torch.concat(predicted_boxes, dim=0)
+        # Sort boxes by scores in descending order
+        indices = torch.tensor(scores).argsort(descending=True)
+        keep = []
 
-def retrieve_anomaly_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anomaly_scores_test_file):
-    with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
-        hashmap_locations_and_anomaly_scores_test = json.load(f)
+        while len(indices) > 0:
+            current = indices[0]
+            keep.append(current.item())
+            if len(indices) == 1:
+                break
 
-    anomaly_scores = []
-    anomaly_scores_conv = []
-    for batch_index, batch in enumerate(test_dataloader):
-        for path in batch['path']:
-            img_id = os.path.basename(path).split('.')[0]
-            curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
-            anomaly_scores.append(curr_file_data['anomaly_score'])
-            anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
+            current_box = predicted_boxes[current].unsqueeze(0)
+            remaining_boxes = predicted_boxes[indices[1:]]
 
-    return anomaly_scores, anomaly_scores_conv
+            ious = iou_calculator(current_box, remaining_boxes).squeeze(0)
+
+            # Keep boxes with IoU less than the threshold
+            indices = indices[1:][ious <= iou_threshold]
+
+        img_patches = predicted_boxes[keep]
+        scores = [scores[ind] for ind in keep]
+        accum_boxes_num_per_subimage = list(itertools.accumulate(boxes_num_per_subimage))
+        keep_sorted = sorted(keep)
+        keep_indices_per_subimage = [[] for _ in range(len(boxes_num_per_subimage))]
+        curr_sub_img=0
+        accumulated_boxes_num = 0
+        for ind in keep_sorted:
+            while ind >= accum_boxes_num_per_subimage[curr_sub_img]:
+                curr_sub_img+=1
+                accumulated_boxes_num+=boxes_num_per_subimage[curr_sub_img-1]
+            keep_indices_per_subimage[curr_sub_img].append(ind-accumulated_boxes_num)
+
+        if plot:
+            metadata_path = os.path.join(self.original_data_path, dataset_type, "meta", f"{image_id}.txt")
+            with open(metadata_path, 'r') as f:
+                for line in f:
+                    if line.startswith('gsd'):
+                        num = line.split(':')[-1]
+                        try:
+                            orig_gsd = float(num)
+                        except ValueError:
+                            orig_gsd = None
+            gsds_div = self.lowest_gsd / orig_gsd
+            labels_path=os.path.join(self.original_data_path, dataset_type, "labelTxt", f"{image_id}.txt")
+            objects = parse_dota_poly(labels_path)
+            gt_labels = [self.classes_names.index(obj["name"]) for obj in objects]
+            formatted_objects = qbox2rbox(torch.stack([torch.tensor(obj["poly"]).flatten()/gsds_div for obj in objects]))
+            img_path=os.path.join(self.original_data_path, dataset_type, "images", f"{image_id}.png")
+            img = cv2.imread(img_path)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            width, height = Image.open(img_path).size
+            img = cv2.resize(img, (ceil(width / gsds_div), ceil(height / gsds_div)))
+            # fix predicted boxes to lowest gsd
+            results = DetDataSample()
+            results.gt_instances, results.pred_instances = InstanceData(), InstanceData()
+            results.gt_instances.bboxes = formatted_objects
+            results.gt_instances.labels = torch.tensor(gt_labels)
+            results.pred_instances.bboxes = img_patches
+            results.pred_instances.scores = torch.tensor([1] * len(results.pred_instances.bboxes))
+            results.pred_instances.labels = torch.tensor([0] * len(results.pred_instances.bboxes))
+            visualizer.add_datasample(name=f"{image_id}_post_nms_multiscale_results",
+                                      image=img,
+                                      data_sample=results.detach().cpu(),
+                                      draw_gt=True,
+                                      out_file=os.path.join(target_dir,
+                                                             f"{image_id}_post_nms_multiscale_results.png"),
+                                      wait_time=0,
+                                      draw_text=False)
+        return keep_indices_per_subimage
+
+    def apply_nms_and_save_objects(self, prev_image_id, curr_all_boxes, curr_all_scores, curr_regressor_results,
+                                   hashmap_locations_and_anomaly_scores, dataset_type, plot=False):
+        target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
+        output_dir = self.output_dir_train_dataset if dataset_type == "train" else self.output_dir_val_dataset if dataset_type == "val" else self.output_dir_test_dataset
+        keep_indices_per_subimage = self.apply_nms_per_image(prev_image_id, curr_all_boxes, curr_all_scores,
+                                                             self.bbox_regressor_runner.visualizer,
+                                                             self.bbox_assigner.iou_calculator, plot=plot,
+                                                             dataset_type=dataset_type)
+        # save patches per subimage
+        for regressor_result, keep_inds in zip(curr_regressor_results, keep_indices_per_subimage):
+            regressor_result.pred_instances = regressor_result.pred_instances[keep_inds]
+            assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
+                                                        regressor_results=regressor_result,
+                                                        image_path=regressor_result.img_path,
+                                                        img_id=regressor_result.img_id,
+                                                        labels_names=self.classes_names,
+                                                        logger=self.logger,
+                                                        plot=False,
+                                                        dataset_type=dataset_type,
+                                                        target_dir=target_dir,
+                                                        extract_bbox_path=output_dir,
+                                                        visualizer=self.bbox_regressor_runner.visualizer,
+                                                        hashmap_locations=hashmap_locations_and_anomaly_scores
+                                                        )
+
+    def save_objects_for_dataset(self, dataset_type:Union["train", "val", "test"]):
+        hashmap_locations_and_anomaly_scores_file = self.hashmap_locations_and_anomaly_scores_train_file if dataset_type == "train" else \
+            self.hashmap_locations_and_anomaly_scores_val_file if dataset_type == "val" else \
+            self.hashmap_locations_and_anomaly_scores_test_file
+        output_dir = self.output_dir_train_dataset if dataset_type == "train" else \
+            self.output_dir_val_dataset if dataset_type == "val" else \
+            self.output_dir_test_dataset
+        dataloader = self.dataloaders[dataset_type]
+        if os.path.exists(hashmap_locations_and_anomaly_scores_file):
+            os.remove(hashmap_locations_and_anomaly_scores_file)
+        hashmap_locations_and_anomaly_scores = {}
+        curr_all_boxes = []
+        curr_all_scores = []
+        curr_regressor_results = []
+        prev_image_id = None
+        # plot 10 first images
+        plot=True
+        i=0
+        with torch.no_grad():
+            for batch in tqdm(dataloader):
+                for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
+                    data_sample = data_sample.to(device)
+                    data_inputs = data_inputs.to(device)
+                    curr_image_id = data_sample.img_id[:data_sample.img_id.find("__")]
+                    if prev_image_id is None:
+                        prev_image_id = curr_image_id
+                    if curr_image_id != prev_image_id:
+                        self.apply_nms_and_save_objects(prev_image_id, curr_all_boxes, curr_all_scores,
+                                                        curr_regressor_results,
+                                                        hashmap_locations_and_anomaly_scores, dataset_type=dataset_type, plot=plot)
+                        i+=1
+                        if i>10:
+                            plot=False
+                        curr_all_boxes = []
+                        curr_all_scores = []
+                        curr_regressor_results = []
+                        prev_image_id = curr_image_id
+                    # inject ID gts in train dataset
+                    if dataset_type=="train":
+                        save_id_gts(gt_instances=data_sample.gt_instances, image_path=data_sample.img_path,
+                                    id_classes_names=[self.classes_names[i] for i in self.id_labels],
+                                    extract_bbox_path=output_dir,
+                                    id_class_labels=self.id_labels, logger=self.logger, img_id=data_sample.img_id)
+                    # iterate per image to save all patches
+                    if data_sample.predicted_patches.predicted_patches.shape[0]==0:
+                        continue
+                    torch.cuda.empty_cache()
+                    curr_regressor_result = self.bbox_regressor_runner.model.predict(
+                        data_inputs.unsqueeze(dim=0), [data_sample])[0].to(device)
+                    curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
+                    with open(curr_anomaly_scores_file, 'rb') as f:
+                        scores_dict = torch.load(f)
+                        del scores_dict['predicted_patches']
+                    curr_all_boxes.append(self.adapt_patches(curr_regressor_result.pred_instances.bboxes, data_sample.img_id))
+                    curr_all_scores += scores_dict['patches_scores']
+                    curr_regressor_results.append(curr_regressor_result)
+
+            assert curr_image_id == prev_image_id  # last image
+            self.apply_nms_and_save_objects(prev_image_id, curr_all_boxes, curr_all_scores,
+                                            curr_regressor_results,
+                                            hashmap_locations_and_anomaly_scores, dataset_type=dataset_type, plot=plot)
+            with open(hashmap_locations_and_anomaly_scores_file, 'w') as f:
+                json.dump(hashmap_locations_and_anomaly_scores, f, indent=4)
+
+
+    def adapt_patches(self, patches, img_id):
+        orig_gsd = os.path.splitext(img_id)[0].split("_")[-1]
+        orig_gsd = float(orig_gsd[0] + "." + orig_gsd[1:])
+        shift_x = int(img_id.split("__")[2])
+        shift_y = int(img_id.split("___")[1].split("_")[0])
+        gsds_div = self.lowest_gsd / orig_gsd
+        adapted_patches = patches.clone().to(device)
+        adapted_patches[:, 0] = adapted_patches[:, 0] + shift_x
+        adapted_patches[:, 1] = adapted_patches[:, 1] + shift_y
+        adapted_patches[:, :-1]= torch.ceil(adapted_patches[:, :-1]/gsds_div).int()
+        return adapted_patches
+

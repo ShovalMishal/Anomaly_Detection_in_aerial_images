@@ -4,20 +4,87 @@ import shutil
 import sys
 from collections import defaultdict
 import statistics
-
+import os.path as osp
 import numpy as np
+from importlib_metadata import metadata
 from matplotlib import pyplot as plt
 from collections import Counter
 from mmengine.config import Config
 import argparse
-
 from DOTA_devkit.DOTA import DOTA
 from utils import create_dataloader
 import random
+from PIL import Image
+
+def _load_dota_txt(txtfile):
+    """Load DOTA's txt annotation.
+
+    Args:
+        txtfile (str): Filename of single txt annotation.
+
+    Returns:
+        dict: Annotation of single image.
+    """
+    gsd, bboxes, labels, diffs = None, [], [], []
+    if txtfile is None:
+        pass
+    elif not osp.isfile(txtfile):
+        print(f"Can't find {txtfile}, treated as empty txtfile")
+    else:
+        with open(txtfile, 'r') as f:
+            for line in f:
+                if line.startswith('gsd'):
+                    num = line.split(':')[-1]
+                    try:
+                        gsd = float(num)
+                    except ValueError:
+                        gsd = None
+                    continue
+
+                items = line.split(' ')
+                if len(items) >= 9:
+                    bboxes.append([float(i) for i in items[:8]])
+                    labels.append(items[8])
+                    diffs.append(int(items[9]) if len(items) == 10 else 0)
+
+    bboxes = np.array(bboxes, dtype=np.float32) if bboxes else \
+        np.zeros((0, 8), dtype=np.float32)
+    diffs = np.array(diffs, dtype=np.int64) if diffs else \
+        np.zeros((0,), dtype=np.int64)
+    ann = dict(bboxes=bboxes, labels=labels, diffs=diffs)
+    return dict(gsd=gsd, ann=ann)
 
 
-def split_train_to_train_and_val_datasets(source_path):
-    train_dataloader = dict(
+def _load_dota_single(imgfile, img_dir, ann_dir, metadata_dir):
+    """Load DOTA's single image.
+
+    Args:
+        imgfile (str): Filename of single image.
+        img_dir (str): Path of images.
+        ann_dir (str): Path of annotations.
+
+    Returns:
+        dict: Content of single image.
+    """
+    img_id, ext = osp.splitext(imgfile)
+    if ext not in ['.jpg', '.JPG', '.png', '.tif', '.bmp']:
+        return None
+
+    imgpath = osp.join(img_dir, imgfile)
+    # size = Image.open(imgpath).size
+    txtfile = None if ann_dir is None else osp.join(ann_dir, img_id + '.txt')
+    metadata_file = None if metadata_dir is None else osp.join(metadata_dir, img_id + '.txt')
+    content = _load_dota_txt(txtfile)
+    meta_content = _load_dota_txt(metadata_file)
+    content['gsd'] = meta_content['gsd']
+    content.update(
+        dict(filename=imgfile, id=img_id))
+    return content
+
+
+
+def split_train_to_train_and_val_datasets(source_path, include_meta=False):
+    train_dataloader_cfg = dict(
         batch_size=1,
         num_workers=1,
         # num_workers=0,
@@ -49,19 +116,24 @@ def split_train_to_train_and_val_datasets(source_path):
     dest_path = os.path.join(os.path.dirname(source_path), "val")
     dest_image_folder = os.path.join(dest_path, "images")
     dest_labels_folder = os.path.join(dest_path, "labelTxt")
+    if include_meta:
+        dest_meta_folder = os.path.join(dest_path, "meta")
+        os.makedirs(dest_meta_folder, exist_ok=True)
+        source_meta_folder = os.path.join(source_path, "meta")
     os.makedirs(dest_image_folder, exist_ok=True)
     os.makedirs(dest_labels_folder, exist_ok=True)
     source_image_folder = os.path.join(source_path, "images")
     source_labels_folder = os.path.join(source_path, "labelTxt")
-    train_dataloader = create_dataloader(train_dataloader)
+    train_dataloader = create_dataloader(train_dataloader_cfg)
     train_labels_counter = count_labels_representation_in_dataset(train_dataloader.dataset)
     desired_counter = {key:value//10 for key,value in train_labels_counter.items()}
     images_to_copy = []
     labels_to_classes_names = train_dataloader.dataset.METAINFO['classes']
-    i=0
+    dataloader_iter = iter(train_dataloader)
     while len(desired_counter) > 0:
         to_copy = False
-        curr_labels = list(train_dataloader.dataset[i]['data_samples'].gt_instances.labels.numpy())
+        curr_iter = next(dataloader_iter)
+        curr_labels = list(curr_iter['data_samples'][0].gt_instances.labels.numpy())
         counter = Counter(curr_labels)
         counter_labels = {labels_to_classes_names[key]:value for key,value in counter.items()}
         for label_name, label_count in counter_labels.items():
@@ -71,15 +143,19 @@ def split_train_to_train_and_val_datasets(source_path):
                 if desired_counter[label_name] <= 0:
                     del desired_counter[label_name]
         if to_copy:
-            images_to_copy.append(train_dataloader.dataset[i]['data_samples'].img_id)
-        i+=1
+            images_to_copy.append(curr_iter['data_samples'][0].img_id)
 
     images_to_copy = list(set(images_to_copy))
     for img_name in images_to_copy:
         shutil.move(os.path.join(source_image_folder, img_name + '.png'), dest_image_folder)
         shutil.move(os.path.join(source_labels_folder, img_name + '.txt'), dest_labels_folder)
+        if os.path.exists(os.path.join(source_meta_folder, img_name + '.txt')):
+            shutil.move(os.path.join(source_meta_folder, img_name + '.txt'), dest_meta_folder)
 
     print(f"{len(images_to_copy)} images were copied to val dataset")
+
+    train_dataloader2 = create_dataloader(train_dataloader_cfg)
+    train_labels_counter = count_labels_representation_in_dataset(train_dataloader2.dataset)
 
 
 def copy_data_and_sample_from_val_background():
@@ -116,7 +192,7 @@ def copy_data_and_sample_from_val_background():
 
 
 def calculate_dataset_representation(train_dataloader, val_dataloader, test_dataloader):
-    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_2/dataset_representation.txt"
+    save_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/temp_results/experiment_multiscale/dataset_representation.txt"
     with open(save_path, 'w') as f:
         # Redirect standard output to the file
         sys.stdout = f
@@ -275,6 +351,21 @@ def calculate_data_statistics(train_dataloader, val_dataloader, test_dataloader)
     print("Dataset representation\n")
     calculate_dataset_representation(train_dataloader, val_dataloader, test_dataloader)
 
+
+def create_gsd_histogram(dataset_path):
+    images_path = os.path.join(dataset_path, "images")
+    metadata_path = os.path.join(dataset_path, "meta")
+    anns_path = os.path.join(dataset_path, "labelTxt")
+    all_gsds = []
+    for img in os.listdir(images_path):
+        content = _load_dota_single(img, images_path, anns_path, metadata_path)
+        if content["gsd"]:
+            all_gsds.append(content["gsd"])
+    plt.hist(all_gsds, bins=20)
+    plt.show()
+    print("median gsd is: ", statistics.median(all_gsds))
+    print("mean gsd is: ", statistics.mean(all_gsds))
+
 def main():
     parser = argparse.ArgumentParser(description='Split train dataset to train and val datasets')
     parser.add_argument("--config", type=str, required=True, help="The input dataset path")
@@ -282,12 +373,7 @@ def main():
     with open(args.config, 'r') as f:
         config = json.load(f)
     train_dataset_path = config["save_dir"]
-    split_train_to_train_and_val_datasets(train_dataset_path)
+    split_train_to_train_and_val_datasets(train_dataset_path, include_meta=False)
 
 if __name__ == '__main__':
     main()
-    # cfg = Config.fromfile("./configs/experiment_2/config.py")
-    # anomaly_detector_cfg = cfg.get("anomaly_detector_cfg")
-    # calculate_data_statistics(train_dataloader=anomaly_detector_cfg.train_dataloader,
-    #                           val_dataloader=anomaly_detector_cfg.val_dataloader,
-    #                           test_dataloader=anomaly_detector_cfg.test_dataloader)
