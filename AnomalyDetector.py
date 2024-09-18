@@ -341,12 +341,13 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         with open(os.path.join(self.test_output_dir, "AD_ranks_dict.json"), 'w') as f:
             json.dump(AD_ranks_dict, f, indent=4)
 
-    def apply_nms_per_image(self, image_id, predicted_boxes, scores, visualizer, iou_calculator, iou_threshold=0.5,
+    def apply_nms_per_image(self, image_id, predicted_boxes, scores_dict, visualizer, iou_calculator, iou_threshold=0.5,
                             plot=False, dataset_type="train"):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         boxes_num_per_subimage = [pb.shape[0] for pb in predicted_boxes]
         predicted_boxes = torch.concat(predicted_boxes, dim=0)
         # Sort boxes by scores in descending order
+        scores = torch.cat([torch.tensor(sub_image_scores["patches_scores"]) for sub_image_scores in scores_dict])
         indices = torch.tensor(scores).argsort(descending=True)
         keep = []
 
@@ -416,17 +417,21 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                       draw_text=False)
         return keep_indices_per_subimage
 
-    def apply_nms_and_save_objects(self, prev_image_id, curr_all_boxes, curr_all_scores, curr_regressor_results,
+    def apply_nms_and_save_objects(self, prev_image_id, curr_all_boxes, curr_all_scores_dict,
+                                   curr_regressor_results,
                                    hashmap_locations_and_anomaly_scores, dataset_type, plot=False):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         output_dir = self.output_dir_train_dataset if dataset_type == "train" else self.output_dir_val_dataset if dataset_type == "val" else self.output_dir_test_dataset
-        keep_indices_per_subimage = self.apply_nms_per_image(prev_image_id, curr_all_boxes, curr_all_scores,
-                                                             self.bbox_regressor_runner.visualizer,
-                                                             self.bbox_assigner.iou_calculator, plot=plot,
+        keep_indices_per_subimage = self.apply_nms_per_image(image_id=prev_image_id, predicted_boxes=curr_all_boxes,
+                                                             scores_dict=curr_all_scores_dict,
+                                                             visualizer=self.bbox_regressor_runner.visualizer,
+                                                             iou_calculator=self.bbox_assigner.iou_calculator, plot=plot,
                                                              dataset_type=dataset_type)
         # save patches per subimage
-        for regressor_result, keep_inds in zip(curr_regressor_results, keep_indices_per_subimage):
+        for sub_image_ind, (regressor_result, keep_inds) in enumerate(zip(curr_regressor_results, keep_indices_per_subimage)):
             regressor_result.pred_instances = regressor_result.pred_instances[keep_inds]
+            filtered_scored_dict = {'patches_scores': [curr_all_scores_dict[sub_image_ind]['patches_scores'][ind] for ind in keep_inds],
+                                    'patches_scores_conv': [curr_all_scores_dict[sub_image_ind]['patches_scores_conv'][ind] for ind in keep_inds]}
             assign_predicted_boxes_to_gt_boxes_and_save(bbox_assigner=self.bbox_assigner,
                                                         regressor_results=regressor_result,
                                                         image_path=regressor_result.img_path,
@@ -438,7 +443,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                         target_dir=target_dir,
                                                         extract_bbox_path=output_dir,
                                                         visualizer=self.bbox_regressor_runner.visualizer,
-                                                        hashmap_locations=hashmap_locations_and_anomaly_scores
+                                                        hashmap_locations=hashmap_locations_and_anomaly_scores,
+                                                        scores_dict=filtered_scored_dict
                                                         )
 
     def save_objects_for_dataset(self, dataset_type:Union["train", "val", "test"]):
@@ -453,8 +459,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             os.remove(hashmap_locations_and_anomaly_scores_file)
         hashmap_locations_and_anomaly_scores = {}
         curr_all_boxes = []
-        curr_all_scores = []
         curr_regressor_results = []
+        curr_all_scores_dict = []
         prev_image_id = None
         # plot 10 first images
         plot=True
@@ -468,15 +474,17 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                     if prev_image_id is None:
                         prev_image_id = curr_image_id
                     if curr_image_id != prev_image_id:
-                        self.apply_nms_and_save_objects(prev_image_id, curr_all_boxes, curr_all_scores,
-                                                        curr_regressor_results,
-                                                        hashmap_locations_and_anomaly_scores, dataset_type=dataset_type, plot=plot)
+                        self.apply_nms_and_save_objects(prev_image_id=prev_image_id, curr_all_boxes=curr_all_boxes,
+                                                        curr_all_scores_dict = curr_all_scores_dict,
+                                                        curr_regressor_results=curr_regressor_results,
+                                                        hashmap_locations_and_anomaly_scores=hashmap_locations_and_anomaly_scores,
+                                                        dataset_type=dataset_type, plot=plot)
                         i+=1
                         if i>10:
                             plot=False
                         curr_all_boxes = []
-                        curr_all_scores = []
                         curr_regressor_results = []
+                        curr_all_scores_dict = []
                         prev_image_id = curr_image_id
                     # inject ID gts in train dataset
                     if dataset_type=="train":
@@ -495,13 +503,15 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                         scores_dict = torch.load(f)
                         del scores_dict['predicted_patches']
                     curr_all_boxes.append(self.adapt_patches(curr_regressor_result.pred_instances.bboxes, data_sample.img_id))
-                    curr_all_scores += scores_dict['patches_scores']
+                    curr_all_scores_dict.append(scores_dict)
                     curr_regressor_results.append(curr_regressor_result)
 
             assert curr_image_id == prev_image_id  # last image
-            self.apply_nms_and_save_objects(prev_image_id, curr_all_boxes, curr_all_scores,
-                                            curr_regressor_results,
-                                            hashmap_locations_and_anomaly_scores, dataset_type=dataset_type, plot=plot)
+            self.apply_nms_and_save_objects(prev_image_id=prev_image_id, curr_all_boxes=curr_all_boxes,
+                                            curr_all_scores_dict=curr_all_scores_dict,
+                                            curr_regressor_results=curr_regressor_results,
+                                            hashmap_locations_and_anomaly_scores=hashmap_locations_and_anomaly_scores,
+                                            dataset_type=dataset_type, plot=plot)
             with open(hashmap_locations_and_anomaly_scores_file, 'w') as f:
                 json.dump(hashmap_locations_and_anomaly_scores, f, indent=4)
 

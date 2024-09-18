@@ -258,7 +258,7 @@ def retrieve_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anom
             labels.append(all_cache[img_id]['label'])
             ood_scores.append(all_cache[img_id]['score'])
 
-    return ood_scores, labels, anomaly_scores, anomaly_scores_conv
+    return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv
 
 
 if __name__ == '__main__':
