@@ -121,6 +121,8 @@ class ViTLightningModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         loss, accuracy = self.common_step(batch, batch_idx)
+        self.log("testing_loss", loss, on_epoch=True)
+        self.log("testing_accuracy", accuracy, on_epoch=True)
 
         return loss
 

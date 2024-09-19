@@ -8,7 +8,7 @@ from mmengine.config import Config
 from PrepareDataPyramid import PrepareDataPyramid
 from utils import retrieve_scores_for_test_dataset
 from AnomalyDetector import VitBasedAnomalyDetector
-from Classifier import VitClassifier, ResNetClassifier
+from Classifier import VitClassifier, ResNet50Classifier, ResNet18Classifier
 from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, \
     rank_samples_accord_features, MSPOODDetector, save_TT_1_images
 from Classifier import create_dataloaders, DatasetType
@@ -44,7 +44,7 @@ class FullODDPipeline:
                                                       self.output_dir, self.logger, self.current_run_name,
                                                       original_data_path=pdp.get_original_data_path(),
                                                       lowest_gsd=pdp.get_lowest_gsd())
-        self.classifier = {'vit': VitClassifier, 'resnet50': ResNetClassifier, 'resnet18':ResNetClassifier}[self.classifier_cfg.type]
+        self.classifier = {'vit': VitClassifier, 'resnet50': ResNet50Classifier, 'resnet18':ResNet18Classifier}[self.classifier_cfg.type]
         self.classifier = self.classifier(self.output_dir, self.classifier_cfg, self.logger, self.current_run_name)
         self.OOD_detector = {'ODIN': ODINOODDetector, 'Energy': EnergyOODDetector, 'msp': MSPOODDetector,
                              'vim': ViMOODDetector}[self.OOD_detector_cfg.type]
