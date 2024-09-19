@@ -18,6 +18,7 @@ from torchvision.transforms import (CenterCrop,
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
+from OOD_Upper_Bound.finetune_renet50_classifier import ResNet50LightningModule
 from OOD_Upper_Bound.finetune_vit_classifier import ViTLightningModule
 from OOD_Upper_Bound.ood_and_id_dataset import OODAndIDDataset
 from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
@@ -128,17 +129,14 @@ def create_dataloaders(train_transforms, val_transforms, data_paths, dataset_typ
 class ResNetClassifier(Classifier):
     def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
         super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+        self.resize = None
 
     def get_resnet_transforms(self):
-        if self.classifier_cfg.type == "resnet18":
-            resize=32
-        else:
-            resize = 224
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         self.train_transforms = Compose([
             # transforms.ToPILImage(),
-            Resize((resize, resize)),
+            Resize((self.resize, self.resize)),
             RandomHorizontalFlip(),
             RandomVerticalFlip(),
             ToTensor(),
@@ -146,10 +144,44 @@ class ResNetClassifier(Classifier):
         ])
 
         self.val_transforms = Compose([
-            Resize((resize, resize)),
+            Resize((self.resize, self.resize)),
             ToTensor(),
             Normalize(mean, std)
         ])
+
+
+class ResNet50Classifier(ResNetClassifier):
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
+        super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+        self.resize=224
+
+    def train(self):
+        self.logger.info(f"Starting to train the ResNet50 classifier\n")
+        early_stop_callback = EarlyStopping(
+            monitor='validation_loss',
+            patience=3,
+            strict=True,
+            verbose=True,
+            mode='min'
+        )
+        checkpoint_callback = ModelCheckpoint(
+            monitor='validation_loss',
+            mode='min',
+            save_top_k=1,
+            dirpath=self.checkpoint_path,
+            filename='best_model',
+        )
+
+        logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
+        trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
+                          callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
+        ckpt_path = 'best' if self.classifier_cfg.resume else None
+        trainer.fit(self.model, ckpt_path=ckpt_path)
+
+        """Finally, let's test the trained model on the test set:"""
+
+        results = trainer.test()
+        print(results)
 
     def initiate_trainer(self, data_source, ood_class_names):
         self.logger.info(f"Initializing classifier\n")
@@ -169,10 +201,58 @@ class ResNetClassifier(Classifier):
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 print(k, v.shape)
-        if self.classifier_cfg.type == "resnet18":
-            assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, 32, 32)
-        else:
-            assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, 224, 224)
+        assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, self.resize, self.resize)
+        assert batch['labels'].shape == (self.classifier_cfg.train_batch_size,)
+        self.id2label = self.in_dist_train_dataloader.dataset.labels_to_classes_names
+        self.label2id = self.in_dist_train_dataloader.dataset.classes_names_to_labels
+
+        self.model = ResNet50LightningModule(train_dataloader=self.in_dist_train_dataloader,
+                                        val_dataloader=self.in_dist_val_dataloader,
+                                        test_dataloader=self.in_dist_test_dataloader,
+                                        loss_class_weights=self.classifier_cfg.loss_class_weights,
+                                        max_epochs=self.classifier_cfg.max_epoch)
+
+        self.model = self.model.to(device)
+
+
+
+    def get_fine_tuned_model(self):
+        model = ResNet50LightningModule.load_from_checkpoint(
+            os.path.join(self.checkpoint_path, f"best_model.ckpt"),
+            train_dataloader=self.in_dist_train_dataloader,
+            val_dataloader=self.in_dist_val_dataloader,
+            test_dataloader=self.in_dist_test_dataloader,
+            id2label=self.id2label,
+            label2id=self.label2id,
+            num_labels=len(self.label2id)
+        )
+        return model
+
+
+class ResNet18Classifier(ResNetClassifier):
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
+        super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+        self.resize=32
+
+    def initiate_trainer(self, data_source, ood_class_names):
+        self.logger.info(f"Initializing classifier\n")
+        self.preperae_id_ood_datasets(data_source, ood_class_names)
+        self.get_resnet_transforms()
+        self.in_dist_train_dataloader, self.in_dist_val_dataloader, self.in_dist_test_dataloader = create_dataloaders(
+            train_transforms=self.train_transforms, val_transforms=self.val_transforms,
+            data_paths={"train": os.path.join(data_source, "train_ood_id_split"),
+                        "val": os.path.join(data_source, "val_ood_id_split"),
+                        "test": os.path.join(data_source, "test_ood_id_split"),
+                        }, dataset_type=DatasetType.IN_DISTRIBUTION, val_batch_size=self.classifier_cfg.val_batch_size,
+            train_batch_size=self.classifier_cfg.train_batch_size,
+            dataloader_num_workers=self.classifier_cfg.dataloader_num_workers,
+            use_weighted_sampler=self.classifier_cfg.weighted_sampler)
+
+        batch = next(iter(self.in_dist_train_dataloader))
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                print(k, v.shape)
+        assert batch['pixel_values'].shape == (self.classifier_cfg.train_batch_size, 3, self.resize, self.resize)
         assert batch['labels'].shape == (self.classifier_cfg.train_batch_size,)
 
 
