@@ -210,7 +210,8 @@ class ResNet50Classifier(ResNetClassifier):
                                         val_dataloader=self.in_dist_val_dataloader,
                                         test_dataloader=self.in_dist_test_dataloader,
                                         loss_class_weights=self.classifier_cfg.loss_class_weights,
-                                        max_epochs=self.classifier_cfg.max_epoch)
+                                        max_epochs=self.classifier_cfg.max_epoch,
+                                        num_labels=len(self.id2label))
 
         self.model = self.model.to(device)
 
