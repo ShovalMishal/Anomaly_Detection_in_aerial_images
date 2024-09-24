@@ -342,7 +342,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             json.dump(AD_ranks_dict, f, indent=4)
 
     def apply_nms_per_image(self, image_id, predicted_boxes, scores_dict, visualizer, iou_calculator, iou_threshold=0.5,
-                            plot=False, dataset_type="train"):
+                            plot=False, dataset_type="train", filter_thresh=None):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         boxes_num_per_subimage = [pb.shape[0] for pb in predicted_boxes]
         predicted_boxes = torch.concat(predicted_boxes, dim=0)
@@ -364,7 +364,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
             # Keep boxes with IoU less than the threshold
             indices = indices[1:][ious <= iou_threshold]
-
+        # filter keep according to filter_thresh
+        keep = keep[:filter_thresh] if filter_thresh else keep
         img_patches = predicted_boxes[keep]
         scores = [scores[ind] for ind in keep]
         accum_boxes_num_per_subimage = list(itertools.accumulate(boxes_num_per_subimage))
@@ -419,16 +420,18 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
     def apply_nms_and_save_objects(self, prev_image_id, curr_all_boxes, curr_all_scores_dict,
                                    curr_regressor_results,
-                                   hashmap_locations_and_anomaly_scores, dataset_type, plot=False):
+                                   hashmap_locations_and_anomaly_scores, dataset_type, plot=False, filter_thresh=None):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         output_dir = self.output_dir_train_dataset if dataset_type == "train" else self.output_dir_val_dataset if dataset_type == "val" else self.output_dir_test_dataset
         keep_indices_per_subimage = self.apply_nms_per_image(image_id=prev_image_id, predicted_boxes=curr_all_boxes,
                                                              scores_dict=curr_all_scores_dict,
                                                              visualizer=self.bbox_regressor_runner.visualizer,
                                                              iou_calculator=self.bbox_assigner.iou_calculator, plot=plot,
-                                                             dataset_type=dataset_type)
+                                                             dataset_type=dataset_type, filter_thresh=filter_thresh)
         # save patches per subimage
         for sub_image_ind, (regressor_result, keep_inds) in enumerate(zip(curr_regressor_results, keep_indices_per_subimage)):
+            if len(keep_inds) == 0:
+                continue
             regressor_result.pred_instances = regressor_result.pred_instances[keep_inds]
             filtered_scored_dict = {'patches_scores': [curr_all_scores_dict[sub_image_ind]['patches_scores'][ind] for ind in keep_inds],
                                     'patches_scores_conv': [curr_all_scores_dict[sub_image_ind]['patches_scores_conv'][ind] for ind in keep_inds]}
@@ -454,6 +457,9 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         output_dir = self.output_dir_train_dataset if dataset_type == "train" else \
             self.output_dir_val_dataset if dataset_type == "val" else \
             self.output_dir_test_dataset
+        filter_thresh = None
+        if dataset_type == "test":
+            filter_thresh = 100
         dataloader = self.dataloaders[dataset_type]
         if os.path.exists(hashmap_locations_and_anomaly_scores_file):
             os.remove(hashmap_locations_and_anomaly_scores_file)
@@ -478,7 +484,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                         curr_all_scores_dict = curr_all_scores_dict,
                                                         curr_regressor_results=curr_regressor_results,
                                                         hashmap_locations_and_anomaly_scores=hashmap_locations_and_anomaly_scores,
-                                                        dataset_type=dataset_type, plot=plot)
+                                                        dataset_type=dataset_type, plot=plot, filter_thresh=filter_thresh)
                         i+=1
                         if i>10:
                             plot=False

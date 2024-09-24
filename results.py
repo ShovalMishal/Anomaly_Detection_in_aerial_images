@@ -323,7 +323,7 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, ano
 
     sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(anomaly_scores)
     # abnormal_ranks_in_sorted_anomaly_scores = len(sorted_all_anomaly_scores) - 1 - torch.searchsorted(sorted_all_anomaly_scores, sorted_abnormal_anomaly_scores)
-
+    anomaly_ranks={}
     for OOD_label in abnormal_labels:
         if OOD_label not in labels:
             continue
@@ -336,6 +336,8 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, ano
         plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
                  torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
                  label=labels_to_classes_names[OOD_label])
+        anomaly_ranks[labels_to_classes_names[OOD_label]] = list(
+            torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
 
     # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
     plt.xlabel(f'OOD ranks in anomaly detection scores')
@@ -345,10 +347,13 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, ano
     plt.grid(True)
     plt.legend()
     plt.savefig(path + f"/OOD_ranks_in_anomaly_detection_scores.pdf")
+    with open(os.path.join(path, "anomaly_ranks_dict.json"), 'w') as f:
+        json.dump(anomaly_ranks, f, indent=4)
 
     # anomaly_scores_convs ranks plot
     plt.figure()
     anomaly_scores_conv = torch.tensor(anomaly_scores_conv)
+    anomaly_conv_ranks = {}
     # abnormal_anomaly_scores_conv = anomaly_scores_conv[[label in abnormal_labels for label in labels]]
     # sorted_abnormal_anomaly_scores_conv, sorted_abnormal_anomaly_scores_conv_indices = torch.sort(abnormal_anomaly_scores_conv)
 
@@ -366,6 +371,8 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, ano
         plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
                  torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
                  label=labels_to_classes_names[OOD_label])
+        anomaly_conv_ranks[labels_to_classes_names[OOD_label]] = list(
+            torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
 
     # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores_conv))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores_conv)[0])
     plt.xlabel(f'OOD ranks in anomaly detection summation scores')
@@ -375,6 +382,8 @@ def plot_eer_and_OOD_values_order(fpr, tpr, thresholds, path, title, scores, ano
     plt.grid(True)
     plt.legend()
     plt.savefig(path + f"/OOD_ranks_in_anomaly_detection_summation_scores.pdf")
+    with open(os.path.join(path, "anomaly_conv_ranks_dict.json"), 'w') as f:
+        json.dump(anomaly_conv_ranks, f, indent=4)
 
 
 def print_ood_id_outcomes(all_preds, labels, labels_to_classes_names, logger):
