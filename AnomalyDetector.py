@@ -128,9 +128,9 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
     def extract_patches(self):
         self.logger.info(f"Extract patches\n")
-        train_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.train_dataloader)
-        val_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.val_dataloader)
-        test_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.bbox_regressor.test_dataloader)
+        train_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.train_dataloader)
+        val_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.val_dataloader)
+        test_dataloader = create_dataloader(dataloader_cfg=self.anomaly_detector_cfg.test_dataloader)
         for dataloader, target_dir in zip([train_dataloader, val_dataloader, test_dataloader],
                                           [self.train_target_dir, self.val_target_dir, self.test_target_dir]):
             for batch in tqdm(dataloader):
