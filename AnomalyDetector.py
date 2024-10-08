@@ -77,6 +77,7 @@ class AnomalyDetector:
                                                             "hash_map_locations_and_anomaly_scores_test_dataset.json")
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
         self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
+        self.data_path = os.path.dirname(os.path.dirname(anomaly_detector_cfg.train_dataloader.dataset.data_root))
 
     def run(self):
         pass
@@ -124,16 +125,6 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                     proposal_sizes=self.proposals_sizes,
                                                     patches_filtering_threshold=self.patches_filtering_threshold,
                                                     output_dir=self.output_dir)
-        # visualizer = self.bbox_regressor_runner.visualizer
-        # img = self.bbox_regressor_runner.test_dataloader.dataset[0]['inputs'].cpu().numpy().transpose((1, 2, 0))
-        # img = mmcv.imconvert(img, 'bgr', 'rgb')
-        # visualizer.add_datasample(name='result',
-        #         image=img,
-        #         data_sample=self.bbox_regressor_runner.test_dataloader.dataset[0]['data_samples'],
-        #         draw_gt=True,
-        #         show=True,
-        #         wait_time=0)
-        # x=1
 
     def extract_patches(self):
         self.logger.info(f"Extract patches\n")
@@ -342,14 +333,17 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             json.dump(AD_ranks_dict, f, indent=4)
 
     def apply_nms_per_image(self, image_id, predicted_boxes, scores_dict, visualizer, iou_calculator, iou_threshold=0.5,
-                            plot=False, dataset_type="train", filter_thresh=None):
+                            plot=False, dataset_type="train", dynamic_threshold=None, filter_thresh=None):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         boxes_num_per_subimage = [pb.shape[0] for pb in predicted_boxes]
         predicted_boxes = torch.concat(predicted_boxes, dim=0)
         # Sort boxes by scores in descending order
         scores = torch.cat([torch.tensor(sub_image_scores["patches_scores"]) for sub_image_scores in scores_dict])
-        indices = torch.tensor(scores).argsort(descending=True)
+        indices = scores.clone().argsort(descending=True)
         keep = []
+        if dynamic_threshold:
+            path = os.path.join(self.data_path, "DOTAV2_ss/test/images/")
+            filter_thresh = len([f for f in os.listdir(path) if f.startswith(image_id)])*100
 
         while len(indices) > 0:
             current = indices[0]
@@ -420,14 +414,15 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
     def apply_nms_and_save_objects(self, prev_image_id, curr_all_boxes, curr_all_scores_dict,
                                    curr_regressor_results,
-                                   hashmap_locations_and_anomaly_scores, dataset_type, plot=False, filter_thresh=None):
+                                   hashmap_locations_and_anomaly_scores, dataset_type, plot=False,
+                                   dynamic_threshold=None, filter_thresh=None):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         output_dir = self.output_dir_train_dataset if dataset_type == "train" else self.output_dir_val_dataset if dataset_type == "val" else self.output_dir_test_dataset
         keep_indices_per_subimage = self.apply_nms_per_image(image_id=prev_image_id, predicted_boxes=curr_all_boxes,
                                                              scores_dict=curr_all_scores_dict,
                                                              visualizer=self.bbox_regressor_runner.visualizer,
                                                              iou_calculator=self.bbox_assigner.iou_calculator, plot=plot,
-                                                             dataset_type=dataset_type, filter_thresh=filter_thresh)
+                                                             dataset_type=dataset_type, dynamic_threshold=dynamic_threshold, filter_thresh=filter_thresh)
         # save patches per subimage
         for sub_image_ind, (regressor_result, keep_inds) in enumerate(zip(curr_regressor_results, keep_indices_per_subimage)):
             if len(keep_inds) == 0:
@@ -457,9 +452,11 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         output_dir = self.output_dir_train_dataset if dataset_type == "train" else \
             self.output_dir_val_dataset if dataset_type == "val" else \
             self.output_dir_test_dataset
+        dynamic_threshold = None
         filter_thresh = None
         if dataset_type == "test":
-            filter_thresh = 100
+            dynamic_threshold=True
+            # filter_thresh=500
         dataloader = self.dataloaders[dataset_type]
         if os.path.exists(hashmap_locations_and_anomaly_scores_file):
             os.remove(hashmap_locations_and_anomaly_scores_file)
@@ -484,7 +481,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                         curr_all_scores_dict = curr_all_scores_dict,
                                                         curr_regressor_results=curr_regressor_results,
                                                         hashmap_locations_and_anomaly_scores=hashmap_locations_and_anomaly_scores,
-                                                        dataset_type=dataset_type, plot=plot, filter_thresh=filter_thresh)
+                                                        dataset_type=dataset_type, plot=plot, dynamic_threshold=dynamic_threshold,
+                                                        filter_thresh=filter_thresh)
                         i+=1
                         if i>10:
                             plot=False
