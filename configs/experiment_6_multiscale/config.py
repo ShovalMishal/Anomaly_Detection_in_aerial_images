@@ -2,10 +2,10 @@
 runai_run = False
 output_dir = "/home/adminubuntu/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/" if not runai_run else "/storage/shoval/Anomaly_Detection_in_aerial_images/results/"
 current_run_name = "experiment_6_multiscale"
-ood_class_names = ['baseball-diamond',  'ground-track-field',
-         'small-vehicle', 'large-vehicle', 'ship', 'tennis-court',
-         'basketball-court', 'storage-tank', 'soccer-ball-field', 'roundabout',
-         'swimming-pool', 'helicopter', 'container-crane', 'airport',
+ood_class_names = ['plane', 'bridge', 'ground-track-field',
+         'ship', 'tennis-court',
+         'basketball-court', 'soccer-ball-field', 'roundabout',
+         'harbor', 'helicopter', 'container-crane', 'airport',
          'helipad']
 
 prepare_data_pyramid_cfg = dict(skip_stage=True, use_gsd=True, normalize_sizes=[0.25, 0.5, 1, 1.5, 3, 5],
