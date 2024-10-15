@@ -13,6 +13,7 @@ from ImagePyramidPatchesDataset import ImagePyramidPatchesDataset
 from mmengine.runner import Runner
 import copy
 from PIL import Image
+import re
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -260,6 +261,46 @@ def retrieve_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anom
 
     return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv
 
+def threshold_and_retrieve_samples(test_dataloader, hashmap_locations_and_anomaly_scores_test_file, all_cache,
+                                   data_path):
+    with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
+        hashmap_locations_and_anomaly_scores_test = json.load(f)
+    all_cache = threshold_scores(all_cache, data_path)
+    anomaly_scores = []
+    anomaly_scores_conv = []
+    ood_scores = []
+    labels = []
+    for batch_index, batch in enumerate(test_dataloader):
+        for path in batch['path']:
+            img_id = os.path.basename(path).split('.')[0]
+            if img_id in all_cache:
+                curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
+                anomaly_scores.append(curr_file_data['anomaly_score'])
+                anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
+                labels.append(all_cache[img_id]['label'])
+                ood_scores.append(all_cache[img_id]['score'])
+
+    return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv
+
+def threshold_scores(all_cache, data_path, dynamic_threshold=False):
+    all_cache = dict(
+        sorted(all_cache.items(), key=lambda x: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', x[0])]))
+    images_names = np.unique([key[:key.find("__")] for key in all_cache.keys()])
+    keys_to_delete = []
+    for img in images_names:
+        filter_thresh=250
+        if dynamic_threshold:
+            path = os.path.join(data_path, "DOTAV2_ss/test/images/")
+            filter_thresh = len([f for f in os.listdir(path) if f.startswith(img)])*100
+        scores = [all_cache[key]['score'] for key in all_cache.keys() if key[:key.find("__")] == img]
+        sorted_scores = sorted(scores)[:filter_thresh]
+        threshold = sorted_scores[-1]
+        for key in all_cache.keys():
+            if key[:key.find("__")] == img and all_cache[key]['score'] > threshold:
+                keys_to_delete.append(key)
+    for key in keys_to_delete:
+        del all_cache[key]
+    return all_cache
 
 if __name__ == '__main__':
     plot_outliers_images()

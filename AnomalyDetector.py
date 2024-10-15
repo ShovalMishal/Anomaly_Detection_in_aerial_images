@@ -454,8 +454,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             self.output_dir_test_dataset
         dynamic_threshold = None
         filter_thresh = None
-        if dataset_type == "test":
-            dynamic_threshold=True
+        # if dataset_type == "test":
+        #     dynamic_threshold=False
             # filter_thresh=500
         dataloader = self.dataloaders[dataset_type]
         if os.path.exists(hashmap_locations_and_anomaly_scores_file):

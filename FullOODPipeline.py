@@ -6,8 +6,8 @@ import torch
 from mmengine.config import Config
 
 from PrepareDataPyramid import PrepareDataPyramid
-from utils import retrieve_scores_for_test_dataset
-from AnomalyDetector import VitBasedAnomalyDetector
+from utils import retrieve_scores_for_test_dataset, threshold_and_retrieve_samples
+from AnomalyDetector import VitBasedAnomalyDetector, AnomalyDetector
 from Classifier import VitClassifier, ResNet50Classifier, ResNet18Classifier
 from OODDetector import ODINOODDetector, EnergyOODDetector, ViMOODDetector, save_k_outliers, \
     rank_samples_accord_features, MSPOODDetector, save_TT_1_images
@@ -107,10 +107,10 @@ class FullODDPipeline:
                             outliers_path=self.OOD_detector.outliers_path, k=self.OOD_detector_cfg.num_of_outliers,
                             logger=self.logger)
 
-        scores, labels, anomaly_scores, anomaly_scores_conv= (retrieve_scores_for_test_dataset
+        scores, labels, anomaly_scores, anomaly_scores_conv = (threshold_and_retrieve_samples
                                                                                (test_dataloader,
                                                                                 self.anomaly_detector.hashmap_locations_and_anomaly_scores_test_file,
-                                                                                all_cache))
+                                                                                all_cache,  self.anomaly_detector.data_path))
 
         _, _, eer_threshold = plot_graphs(scores=scores, anomaly_scores=anomaly_scores,
                                          anomaly_scores_conv=anomaly_scores_conv, labels=labels,
