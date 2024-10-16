@@ -193,11 +193,11 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.bbox_regressor_runner.train()
         self.initiate_dataloaders()
         if not self.skip_stage:
-            self.logger.info(f"Anomaly detection - train dataset\n")
-            self.save_objects_for_dataset("train")
-
-            self.logger.info(f"Anomaly detection - val dataset\n")
-            self.save_objects_for_dataset("val")
+            # self.logger.info(f"Anomaly detection - train dataset\n")
+            # self.save_objects_for_dataset("train")
+            #
+            # self.logger.info(f"Anomaly detection - val dataset\n")
+            # self.save_objects_for_dataset("val")
 
             self.logger.info(f"Anomaly detection - test dataset\n")
             self.save_objects_for_dataset("test")
