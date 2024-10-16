@@ -175,7 +175,7 @@ class ResNet50Classifier(ResNetClassifier):
         logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
         trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
                           callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
-        ckpt_path = 'best' if self.classifier_cfg.resume else None
+        ckpt_path = os.path.join(self.checkpoint_path, "best_model.ckpt") if self.classifier_cfg.resume else None
         trainer.fit(self.model, ckpt_path=ckpt_path)
 
         """Finally, let's test the trained model on the test set:"""
