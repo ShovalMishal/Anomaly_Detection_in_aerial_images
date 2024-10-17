@@ -14,7 +14,7 @@ from mmengine.runner import Runner
 import copy
 from PIL import Image
 import re
-
+import torchvision.transforms as transforms
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -301,6 +301,34 @@ def threshold_scores(all_cache, data_path, dynamic_threshold=False):
     for key in keys_to_delete:
         del all_cache[key]
     return all_cache
+
+
+class ResizeLargestAndPad:
+    def __init__(self, size):
+        self.size = size
+    def __call__(self, image):
+        w, h = image.size
+        # Determine the scaling factor to make the largest side 224
+        if w > h:
+            new_w, new_h = self.size, int(h * self.size / w)
+        else:
+            new_w, new_h = int(w * self.size / h), self.size
+
+        # Resize the image with the aspect ratio preserved
+        resized_image = transforms.functional.resize(image, (new_h, new_w))
+
+        # Calculate the padding to make the image square
+        padding_left = (self.size - new_w) // 2
+        padding_top = (self.size - new_h) // 2
+        padding_right = self.size - new_w - padding_left
+        padding_bottom = self.size - new_h - padding_top
+
+        # Apply padding
+        padded_image = transforms.functional.pad(resized_image,
+                                                 (padding_left, padding_top, padding_right, padding_bottom), fill=0)
+
+        return padded_image
+
 
 if __name__ == '__main__':
     plot_outliers_images()

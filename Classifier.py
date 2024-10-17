@@ -25,7 +25,7 @@ from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
 from results import plot_confusion_matrix
 from resnet_pytorch_small_images.train import create_and_train_model
 from resnet_pytorch_small_images.utils import get_network, best_acc_weights, most_recent_folder
-from utils import eval_model
+from utils import eval_model, ResizeLargestAndPad
 from transformers import ViTImageProcessor
 
 from OOD_Upper_Bound.ood_and_id_dataset import generate_label_mappers, generate_weights
@@ -135,8 +135,7 @@ class ResNetClassifier(Classifier):
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         self.train_transforms = Compose([
-            # transforms.ToPILImage(),
-            Resize((self.resize, self.resize)),
+            ResizeLargestAndPad(self.resize),
             RandomHorizontalFlip(),
             RandomVerticalFlip(),
             ToTensor(),
@@ -144,7 +143,7 @@ class ResNetClassifier(Classifier):
         ])
 
         self.val_transforms = Compose([
-            Resize((self.resize, self.resize)),
+            ResizeLargestAndPad(self.resize),
             ToTensor(),
             Normalize(mean, std)
         ])
