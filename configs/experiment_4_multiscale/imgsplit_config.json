@@ -1,13 +1,13 @@
 {
     "nproc": 1,
     "img_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/images"
+        "/home/adminubuntu/Documents/Repositories/data/DOTAV2/test/images"
     ],
     "ann_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/labelTxt"
+        "/home/adminubuntu/Documents/Repositories/data/DOTAV2/test/labelTxt"
     ],
     "metadata_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/meta"
+        "/home/adminubuntu/Documents/Repositories/data/DOTAV2/test/meta"
     ],
     "sizes": [
         1024
@@ -26,7 +26,7 @@
         116,
         124
     ],
-    "save_dir": "/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test",
+    "save_dir": "/home/adminubuntu/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test",
     "save_ext": ".png",
     "target_gsd": 5,
     "normalize_gsd": true
