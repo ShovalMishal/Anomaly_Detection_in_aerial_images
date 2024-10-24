@@ -2,7 +2,7 @@
 runai_run = False
 output_dir = "/home/adminubuntu/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/" if not runai_run else "/storage/shoval/Anomaly_Detection_in_aerial_images/results/"
 current_run_name = "experiment_4_multiscale_resnet50_fix_aug"
-ood_class_names = ['plane', 'baseball-diamond', 'bridge', 'ground-track-field',
+ood_class_names = ['roundabout', 'plane', 'baseball-diamond', 'bridge', 'ground-track-field',
          'small-vehicle', 'large-vehicle', 'ship',
          'basketball-court','soccer-ball-field',
          'harbor',  'helicopter', 'container-crane', 'airport',
