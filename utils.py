@@ -3,6 +3,8 @@ import pickle
 import shutil
 import logging
 import os
+import sys
+
 import torch
 from matplotlib import pyplot as plt
 from plotly.figure_factory import np
@@ -16,7 +18,6 @@ from PIL import Image
 import re
 import torchvision.transforms as transforms
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 
 def create_logger(path):
     if os.path.exists(path):
@@ -204,44 +205,6 @@ def create_and_save_confusion_matrix(path, dataset_name, logger, all_labels=None
     logger.info(res_confusion_matrix)
 
 
-def plot_outliers_images():
-    from matplotlib import pyplot as plt
-
-    # Path to the folder containing the images
-    folder_path = "/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/test/OOD/weights_in_loss_and_sampling_bg_in_val_and_train_datasets/outliers/50_highest_scores_patches"
-    # Get a list of all image files in the folder
-    image_files = [f for f in os.listdir(folder_path) if f.endswith('.jpg')]
-
-    # Define the number of images to display per row and column
-    num_images_per_row = 10
-    num_images_per_col = 5
-
-    # Create a new figure
-    fig, axs = plt.subplots(num_images_per_col, num_images_per_row, tight_layout=True)
-
-    # Loop through the images and display them on the plot
-    for i, file in enumerate(image_files):
-        # Calculate the position of the image in the grid
-        row = i // num_images_per_row
-        col = i % num_images_per_row
-
-        # Load the image using PIL
-        img = Image.open(os.path.join(folder_path, file))
-
-        # Display the image on the plot
-        axs[row, col].imshow(img)
-
-        axs[row, col].axis('off')
-
-        # Set the title of the image as its name
-        axs[row, col].set_title(file[:file.find("_")], fontsize=7)
-
-    # Adjust spacing between subplots
-    plt.subplots_adjust(wspace=0.3, hspace=1)
-    # Show the plot
-    plt.savefig(os.path.dirname(folder_path) + "/50_highest_scores_patches.jpg")
-
-
 def retrieve_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anomaly_scores_test_file, all_cache):
     with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
         hashmap_locations_and_anomaly_scores_test = json.load(f)
@@ -262,38 +225,51 @@ def retrieve_scores_for_test_dataset(test_dataloader, hashmap_locations_and_anom
     return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv
 
 def threshold_and_retrieve_samples(test_dataloader, hashmap_locations_and_anomaly_scores_test_file, all_cache,
-                                   data_path):
-    with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
-        hashmap_locations_and_anomaly_scores_test = json.load(f)
-    all_cache = threshold_scores(all_cache, data_path)
-    anomaly_scores = []
-    anomaly_scores_conv = []
-    ood_scores = []
-    labels = []
-    for batch_index, batch in enumerate(test_dataloader):
-        for path in batch['path']:
-            img_id = os.path.basename(path).split('.')[0]
-            if img_id in all_cache:
-                curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
-                anomaly_scores.append(curr_file_data['anomaly_score'])
-                anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
-                labels.append(all_cache[img_id]['label'])
-                ood_scores.append(all_cache[img_id]['score'])
+                                   data_path, cache_path, patches_per_image):
+    if not os.path.exists(cache_path):
+        with open(hashmap_locations_and_anomaly_scores_test_file, 'r') as f:
+            hashmap_locations_and_anomaly_scores_test = json.load(f)
+        all_cache = threshold_scores(all_cache, data_path, patches_per_image)
+        anomaly_scores = []
+        anomaly_scores_conv = []
+        ood_scores = []
+        labels = []
+        original_inds = []
+        for batch_index, batch in enumerate(test_dataloader):
+            for path_ind, path in enumerate(batch['path']):
+                img_id = os.path.basename(path).split('.')[0]
+                if img_id in all_cache:
+                    curr_file_data = hashmap_locations_and_anomaly_scores_test[img_id]
+                    anomaly_scores.append(curr_file_data['anomaly_score'])
+                    anomaly_scores_conv.append(curr_file_data['anomaly_score_conv'])
+                    labels.append(all_cache[img_id]['label'])
+                    ood_scores.append(all_cache[img_id]['score'])
+                    original_inds.append(batch_index*len(batch['path'])+path_ind)
+        filtered_cache={}
+        filtered_cache["ood_scores"]=ood_scores
+        filtered_cache["labels"]=labels
+        filtered_cache["anomaly_scores"]=anomaly_scores
+        filtered_cache["anomaly_scores_conv"]=anomaly_scores_conv
+        filtered_cache["original_inds"]=original_inds
+        with open(cache_path, 'w') as f:
+            json.dump(filtered_cache, f, indent=4)
+    else:
+        with open(cache_path, 'r') as file:
+            filtered_cache = json.load(file)
+        ood_scores, labels, anomaly_scores, anomaly_scores_conv, original_inds = filtered_cache["ood_scores"], filtered_cache["labels"], filtered_cache["anomaly_scores"], filtered_cache["anomaly_scores_conv"], filtered_cache["original_inds"]
+    return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv, torch.tensor(original_inds)
 
-    return torch.tensor(ood_scores), torch.tensor(labels), anomaly_scores, anomaly_scores_conv
-
-def threshold_scores(all_cache, data_path, dynamic_threshold=False):
+def threshold_scores(all_cache, data_path, patches_per_image, dynamic_threshold=False):
     all_cache = dict(
         sorted(all_cache.items(), key=lambda x: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', x[0])]))
     images_names = np.unique([key[:key.find("__")] for key in all_cache.keys()])
     keys_to_delete = []
-    for img in images_names:
-        filter_thresh=250
+    for img_ind, img  in tqdm(enumerate(images_names)):
         if dynamic_threshold:
             path = os.path.join(data_path, "DOTAV2_ss/test/images/")
-            filter_thresh = len([f for f in os.listdir(path) if f.startswith(img)])*100
+            patches_per_image = len([f for f in os.listdir(path) if f.startswith(img)])*100
         scores = [all_cache[key]['score'] for key in all_cache.keys() if key[:key.find("__")] == img]
-        sorted_scores = sorted(scores)[:filter_thresh]
+        sorted_scores = sorted(scores)[:patches_per_image]
         threshold = sorted_scores[-1]
         for key in all_cache.keys():
             if key[:key.find("__")] == img and all_cache[key]['score'] > threshold:
@@ -308,7 +284,7 @@ class ResizeLargestAndPad:
         self.size = size
     def __call__(self, image):
         w, h = image.size
-        # Determine the scaling factor to make the largest side 224
+        # Determine the scaling factor to make the largest side equal to size
         if w > h:
             new_w, new_h = self.size, int(h * self.size / w)
         else:
@@ -329,6 +305,50 @@ class ResizeLargestAndPad:
 
         return padded_image
 
+def rank_TT_1_acord_scores(all_labels, all_scores, ood_labels, labels_to_classes_names, logger, OOD=False, plot=False):
+    mode = "OOD" if OOD else "AD"
+    all_scores = torch.tensor(all_scores)
+    all_labels = torch.tensor(all_labels)
+    sorted_all_scores, sorted_all_scores_indices = torch.sort(all_scores)
 
-if __name__ == '__main__':
-    plot_outliers_images()
+    tt1 = {}
+    ranks_dict = {}
+    for OOD_label in ood_labels:
+        if OOD_label not in all_labels:
+            continue
+        curr_label_scores = all_scores[all_labels == OOD_label]
+        curr_label_sorted_scores, curr_label_anomaly_scores_indices = torch.sort(
+            curr_label_scores)
+        curr_label_ranks_in_all_scores = len(
+            sorted_all_scores) - 1 - torch.searchsorted(sorted_all_scores,
+                                                                curr_label_sorted_scores)
+        sorted_curr_label_ranks_in_all_scores, _ = torch.sort(curr_label_ranks_in_all_scores)
+        tt1[labels_to_classes_names[OOD_label]] = \
+            sorted_curr_label_ranks_in_all_scores[0]
+        logger.info(
+            f"OOD label {labels_to_classes_names[OOD_label]} first rank in {mode}"
+            f" scores: {tt1[labels_to_classes_names[OOD_label]]}")
+        ranks_dict[labels_to_classes_names[OOD_label]] = list(
+            sorted_curr_label_ranks_in_all_scores.numpy().astype(np.float64))
+        if plot:
+            plt.plot(list(range(len(curr_label_ranks_in_all_scores))),
+                     sorted_curr_label_ranks_in_all_scores, label=labels_to_classes_names[OOD_label])
+
+    return tt1, ranks_dict
+
+def create_ood_id_dataset(src_root: str, target_root: str, ood_classes: list):
+    # create src root and target root directories
+    os.makedirs(target_root, exist_ok=True)
+    os.makedirs(os.path.join(target_root, 'id_dataset'), exist_ok=True)
+    os.makedirs(os.path.join(target_root, 'ood_dataset'), exist_ok=True)
+    for _class in os.listdir(src_root):
+        if _class not in ood_classes:
+            if not os.path.exists(os.path.join(target_root, 'id_dataset', _class)):
+                os.symlink(os.path.join(src_root, _class), os.path.join(target_root, 'id_dataset', _class),
+                           target_is_directory=True)
+
+    for _class in ood_classes:
+        if not os.path.exists(os.path.join(target_root, 'ood_dataset', _class)) and os.path.exists(os.path.join(src_root, _class)):
+            os.symlink(os.path.join(src_root, _class), os.path.join(target_root, 'ood_dataset', _class),
+                       target_is_directory=True)
+

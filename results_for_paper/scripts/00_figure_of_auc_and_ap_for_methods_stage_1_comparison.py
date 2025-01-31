@@ -605,8 +605,9 @@ fig = plt.gcf()
 # fig.set_size_inches((10, 10))
 # plt.legend(bbox_to_anchor=(1.04, 0.5), loc="center left", borderaxespad=0)
 plt.grid(True)
+plt.title('Stage 1 - Saliency map comparison results')
 plt.tight_layout()
-plt.title('Stage 1 - Saliency map cooperarison results')
+
 plt.savefig("../figures_for_paper/00_figure_of_auc_and_ap_for_methods_stage_1_comparison.pdf", format='pdf')
 
 

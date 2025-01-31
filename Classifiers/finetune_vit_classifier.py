@@ -2,11 +2,7 @@
 import os
 from enum import Enum
 
-
-from OODDetector import ODINOODDetector
-from OOD_Upper_Bound.ood_and_id_dataset import OODAndIDDataset
-from results import plot_confusion_matrix
-from utils import eval_model
+from ood_and_id_dataset import OODAndIDDataset
 
 """## Preprocessing the data
 

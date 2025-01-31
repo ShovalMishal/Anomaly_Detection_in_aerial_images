@@ -1,7 +1,7 @@
 """This config is originally from OpenMMLab: <link to github>"""
 runai_run = False
 output_dir = "/home/adminubuntu/Documents/Repositories/Anomaly_Detection_in_aerial_images/results/" if not runai_run else "/storage/shoval/Anomaly_Detection_in_aerial_images/results/"
-current_run_name = "experiment_4_multiscale_resnet50_fix_aug"
+current_run_name = "experiment_4_multiscale"
 ood_class_names = ['roundabout', 'plane', 'baseball-diamond', 'bridge', 'ground-track-field',
          'small-vehicle', 'large-vehicle', 'ship',
          'basketball-court','soccer-ball-field',
@@ -345,6 +345,6 @@ classifier_cfg = dict(type="resnet50",
                       loss_class_weights=True,
                       evaluate=True)
 
-OOD_detector_cfg = dict(type="ODIN",
-                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=50,
-                        rank_accord_features=True)
+OOD_detector_cfg = dict(type="ODIN", batch_size=100,
+                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=250,
+                        rank_accord_features=True, patches_per_image=500, num_of_TT_1_original_images=0)

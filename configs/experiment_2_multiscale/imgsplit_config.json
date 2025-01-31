@@ -1,13 +1,13 @@
 {
     "nproc": 1,
     "img_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/images"
+        "/home/shoval/Documents/Repositories/data/DOTAV2/train/images"
     ],
     "ann_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/labelTxt"
+        "/home/shoval/Documents/Repositories/data/DOTAV2/train/labelTxt"
     ],
     "metadata_dirs": [
-        "/home/shoval/Documents/Repositories/data/DOTAV2/test/meta"
+        "/home/shoval/Documents/Repositories/data/DOTAV2/train/meta"
     ],
     "sizes": [
         1024
@@ -26,8 +26,9 @@
         116,
         124
     ],
-    "save_dir": "/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test",
+    "save_dir": "/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated_wo_gsd/train",
     "save_ext": ".png",
-    "target_gsd": 5,
-    "normalize_gsd": true
+    "target_gsd": 0.25,
+    "normalize_gsd": false,
+    "normalize_without_gsd": true
 }

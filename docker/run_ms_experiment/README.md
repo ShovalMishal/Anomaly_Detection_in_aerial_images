@@ -10,8 +10,16 @@ On the A5000:
 ```shell
 docker run --gpus all --shm-size=24g -v /home/shoval/Documents/Repositories/:/home/shoval/Documents/Repositories/ --rm -it shovalmishal/ood-final:run_ms_experiment
 ```
+```
+docker run --gpus all --shm-size=24g -v /home/adminubuntu/Documents/Repositories/:/home/adminubuntu/Documents/Repositories/ --rm -it ajevnisek/ood-final:run_ms_experiment
+```
 On runai:
 ```shell
 runai submit --name full-ood-pipeline -g 1.0 -i shovalmishal/ood-final:run_ms_experiment --pvc=storage:/storage --large-shm 
 ```
+
+
+
+
+
 

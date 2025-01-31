@@ -70,7 +70,7 @@ class ResNet50LightningModule(pl.LightningModule):
         self.log('testing_accuracy', acc, prog_bar=True)
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=1e-4, weight_decay=0.01)
+        optimizer = AdamW(self.parameters(), lr=5e-5, weight_decay=0.001)
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=self.num_warmup_steps,
@@ -93,3 +93,18 @@ class ResNet50LightningModule(pl.LightningModule):
 
     def test_dataloader(self):
         return self._test_dataloader
+
+    def pen_ultimate_layer(self, x):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        x = self.model.layer4(x)
+
+        x = self.model.avgpool(x)
+        x = torch.flatten(x, 1)
+        return x

@@ -338,6 +338,6 @@ classifier_cfg = dict(type="resnet18",
                       loss_class_weights=True,
                       evaluate=True)
 
-OOD_detector_cfg = dict(type="ODIN",
-                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=100,
-                        rank_accord_features=True)
+OOD_detector_cfg = dict(type="ODIN", batch_size=100,
+                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=250,
+                        rank_accord_features=True, patches_per_image=500, num_of_TT_1_original_images=0)

@@ -48,7 +48,6 @@ class BBoxRegressor(BaseModel):
         self.patches_filtering_threshold = None
         self.proposal_sizes = None
         self.features_extractor = None
-        self.logger = None
         self.vit_patch_size = None
         self.output_dir = None
         self.bbox_roi_extractor = MODELS.build(bbox_roi_extractor)
@@ -57,9 +56,8 @@ class BBoxRegressor(BaseModel):
         self.assigner = TASK_UTILS.build(assigner)
         self.test_cfg = test_cfg
 
-    def initialize(self, logger, vit_patch_size, features_extractor, dino_vit_bg_subtractor,
+    def initialize(self, vit_patch_size, features_extractor, dino_vit_bg_subtractor,
                    proposal_sizes, patches_filtering_threshold, output_dir):
-        self.logger = logger
         self.vit_patch_size = vit_patch_size
         self.features_extractor = features_extractor
         self.proposal_sizes = proposal_sizes
@@ -250,27 +248,12 @@ class BBoxRegressor(BaseModel):
 
     def loss(self, batch_inputs: Tensor,
              batch_data_samples: SampleList, add_gt_as_proposals: bool = True):
-        # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
-        #     with record_function("model_inference"):
-        # time1 = time.time()
         x, proposals_list, empty_inds = self.extract_feat_and_proposals(batch_inputs, batch_data_samples)
-        # time2 = time.time()
-        # print(f"Time to extract features and proposals: {time2 - time1}")
-        # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-
-        # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
-        #     with record_function("model_inference"):
-        # time1 = time.time()
         if len(empty_inds) > 0:
             batch_data_samples = [batch_data_samples[i] for i in range(len(batch_data_samples)) if i not in empty_inds]
         assert len(proposals_list) == len(batch_data_samples)
         bbox_loss_and_target, bbox_results = self.calculate_loss(x=x, proposals_list=proposals_list,
                                                                  batch_data_samples=batch_data_samples,
                                                                  add_gt_as_proposals=add_gt_as_proposals)
-        # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-
         bbox_results.update(bbox_loss_and_target['loss_bbox'])
-        # time2 = time.time()
-        # print(f"Time to calculate loss: {time2 - time1}")
         return bbox_results
-

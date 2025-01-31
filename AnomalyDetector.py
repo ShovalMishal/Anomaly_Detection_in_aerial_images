@@ -24,9 +24,11 @@ from single_image_bg_detector.bg_subtraction_with_dino_vit import BGSubtractionW
 from DOTA_devkit.DOTA import DOTA
 from single_image_bg_detector.bg_subtractor_utils import (extract_patches_accord_heatmap, \
                                                           assign_predicted_boxes_to_gt_boxes_and_save, save_id_gts)
-from utils import create_dataloader
+from utils import create_dataloader, rank_TT_1_acord_scores
 from mmengine.structures import InstanceData
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+EXAMPLES_NUM_TO_PLOT=10
 
 # Set a random seed for PyTorch
 seed = 42
@@ -78,6 +80,7 @@ class AnomalyDetector:
         self.to_extract_patches = anomaly_detector_cfg.extract_patches
         self.evaluate_stage = anomaly_detector_cfg.evaluate_stage
         self.data_path = os.path.dirname(os.path.dirname(anomaly_detector_cfg.train_dataloader.dataset.data_root))
+        self.patches_per_image = anomaly_detector_cfg.patches_per_image
 
     def run(self):
         pass
@@ -118,8 +121,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         self.anomaly_detector_cfg.bbox_regressor.val_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.anomaly_detector_cfg.bbox_regressor.test_dataloader.dataset.extracted_patches_folder = self.proposals_cache_path
         self.bbox_regressor_runner = Runner.from_cfg(self.anomaly_detector_cfg.bbox_regressor)
-        self.bbox_regressor_runner.model.initialize(logger=self.logger,
-                                                    vit_patch_size=self.anomaly_detector_cfg.vit_patch_size,
+        self.bbox_regressor_runner.logger = self.logger
+        self.bbox_regressor_runner.model.initialize(vit_patch_size=self.anomaly_detector_cfg.vit_patch_size,
                                                     features_extractor=self.dino_vit_bg_subtractor.model,
                                                     dino_vit_bg_subtractor=self.dino_vit_bg_subtractor,
                                                     proposal_sizes=self.proposals_sizes,
@@ -202,8 +205,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             self.logger.info(f"Anomaly detection - test dataset\n")
             self.save_objects_for_dataset("test")
 
-            self.plot_ranks_graph_and_tt1_after_AD_stage()
         if self.evaluate_stage:
+            self.plot_ranks_graph_and_tt1_after_AD_stage()
             self.test_with_and_without_regressor()
 
     def test_with_and_without_regressor(self):
@@ -267,47 +270,55 @@ class VitBasedAnomalyDetector(AnomalyDetector):
     def plot_ranks_graph_and_tt1_after_AD_stage(self):
         all_labels = []
         all_AD_socres = []
+        curr_image_name = None
+        curr_image_scores=[]
+        curr_image_all_labels=[]
         for batch in tqdm(self.test_dataloader):
             for data_inputs, data_sample in zip(batch['inputs'], batch['data_samples']):
                 formatted_proposals_patches = RotatedBoxes(hbox2rbox(data_sample.predicted_patches.predicted_patches))
                 formatted_proposals_patches = InstanceData(priors=formatted_proposals_patches)
+                curr_image_name = data_sample.img_id[:data_sample.img_id.find("__")] if curr_image_name is None else curr_image_name
+                new_image_name = data_sample.img_id[:data_sample.img_id.find("__")]
+                if curr_image_name != new_image_name:
+                    # filter accord thresh
+                    sorted_pairs = sorted(zip(curr_image_scores, curr_image_all_labels), key=lambda pair: pair[0], reverse=True)
+                    sorted_scores, sorted_labels= zip(*sorted_pairs)
+                    all_labels.extend(list(sorted_labels)[:self.patches_per_image])
+                    all_AD_socres.extend(list(sorted_scores)[:self.patches_per_image])
+                    curr_image_name=new_image_name
+                    curr_image_scores = []
+                    curr_image_all_labels = []
+
                 assign_result = self.bbox_assigner.assign(
                     formatted_proposals_patches.to(device), data_sample.gt_instances.to(device))
-                all_labels.extend(assign_result.labels.cpu().numpy())
+                curr_image_all_labels.extend(assign_result.labels.cpu().numpy())
                 # open pt file a read for each patch its corresponds anomaly score
                 curr_anomaly_scores_file = os.path.join(self.proposals_cache_path, f"{data_sample.img_id}.pt")
                 with open(curr_anomaly_scores_file, 'rb') as f:
                     scores_dict = torch.load(f)
-                all_AD_socres.extend(scores_dict['patches_scores'])
+                curr_image_scores.extend(scores_dict['patches_scores'])
 
-        all_AD_socres = torch.tensor(all_AD_socres)
-        all_labels = torch.tensor(all_labels)
-        sorted_all_anomaly_scores, sorted_all_anomaly_scores_indices = torch.sort(all_AD_socres)
+        if len(curr_image_scores) > 0:
+            sorted_pairs = sorted(zip(curr_image_scores, curr_image_all_labels), key=lambda pair: pair[0], reverse=True)
+            sorted_scores, sorted_labels = zip(*sorted_pairs)
+            all_labels.extend(list(sorted_labels)[:self.patches_per_image])
+            all_AD_socres.extend(list(sorted_scores)[:self.patches_per_image])
+
         ood_labels = [self.test_dataloader.dataset.METAINFO['classes'].index(label) for label in
                       self.test_dataloader.dataset.ood_labels]
-        tt1 = {}
-        AD_ranks_dict = {}
+        tt1, AD_ranks_dict = rank_TT_1_acord_scores(all_labels=all_labels, all_scores=all_AD_socres,
+                                                    ood_labels=ood_labels,
+                                                    labels_to_classes_names=self.test_dataloader.dataset.METAINFO['classes'],
+                                                    logger=self.logger, OOD=False)
+
         for OOD_label in ood_labels:
             if OOD_label not in all_labels:
                 continue
-            curr_label_anomaly_scores = all_AD_socres[all_labels == OOD_label]
-            curr_label_sorted_anomaly_scores, curr_label_anomaly_scores_indices = torch.sort(
-                curr_label_anomaly_scores)
-            curr_label_ranks_in_all_anomaly_scores = len(
-                sorted_all_anomaly_scores) - 1 - torch.searchsorted(sorted_all_anomaly_scores,
-                                                                    curr_label_sorted_anomaly_scores)
+            curr_label_ranks_in_all_anomaly_scores = AD_ranks_dict[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]]
             plt.plot(list(range(len(curr_label_ranks_in_all_anomaly_scores))),
-                     torch.sort(curr_label_ranks_in_all_anomaly_scores)[0],
+                     curr_label_ranks_in_all_anomaly_scores,
                      label=self.test_dataloader.dataset.METAINFO['classes'][OOD_label])
-            tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = \
-                torch.sort(curr_label_ranks_in_all_anomaly_scores)[0][0]
-            self.logger.info(
-                f"OOD label {self.test_dataloader.dataset.METAINFO['classes'][OOD_label]} first rank in AD"
-                f" scores: {tt1[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]]}")
-            AD_ranks_dict[self.test_dataloader.dataset.METAINFO['classes'][OOD_label]] = list(
-                torch.sort(curr_label_ranks_in_all_anomaly_scores)[0].numpy().astype(np.float64))
 
-            # plt.plot(list(range(len(abnormal_ranks_in_sorted_anomaly_scores))), torch.sort(abnormal_ranks_in_sorted_anomaly_scores)[0])
         plt.xlabel(f'abnormal objects ranks in anomaly detection scores')
         plt.ylabel(f'all samples anomaly detection scores rank')
         plt.title('Abnormal objects ranks')
@@ -333,7 +344,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             json.dump(AD_ranks_dict, f, indent=4)
 
     def apply_nms_per_image(self, image_id, predicted_boxes, scores_dict, visualizer, iou_calculator, iou_threshold=0.5,
-                            plot=False, dataset_type="train", dynamic_threshold=None, filter_thresh=None):
+                            plot=False, dataset_type="train"):
         target_dir = self.train_target_dir if dataset_type == "train" else self.val_target_dir if dataset_type == "val" else self.test_target_dir
         boxes_num_per_subimage = [pb.shape[0] for pb in predicted_boxes]
         predicted_boxes = torch.concat(predicted_boxes, dim=0)
@@ -341,9 +352,6 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         scores = torch.cat([torch.tensor(sub_image_scores["patches_scores"]) for sub_image_scores in scores_dict])
         indices = scores.clone().argsort(descending=True)
         keep = []
-        if dynamic_threshold:
-            path = os.path.join(self.data_path, "DOTAV2_ss/test/images/")
-            filter_thresh = len([f for f in os.listdir(path) if f.startswith(image_id)])*100
 
         while len(indices) > 0:
             current = indices[0]
@@ -358,10 +366,8 @@ class VitBasedAnomalyDetector(AnomalyDetector):
 
             # Keep boxes with IoU less than the threshold
             indices = indices[1:][ious <= iou_threshold]
-        # filter keep according to filter_thresh
-        keep = keep[:filter_thresh] if filter_thresh else keep
+
         img_patches = predicted_boxes[keep]
-        scores = [scores[ind] for ind in keep]
         accum_boxes_num_per_subimage = list(itertools.accumulate(boxes_num_per_subimage))
         keep_sorted = sorted(keep)
         keep_indices_per_subimage = [[] for _ in range(len(boxes_num_per_subimage))]
@@ -422,7 +428,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                              scores_dict=curr_all_scores_dict,
                                                              visualizer=self.bbox_regressor_runner.visualizer,
                                                              iou_calculator=self.bbox_assigner.iou_calculator, plot=plot,
-                                                             dataset_type=dataset_type, dynamic_threshold=dynamic_threshold, filter_thresh=filter_thresh)
+                                                             dataset_type=dataset_type)
         # save patches per subimage
         for sub_image_ind, (regressor_result, keep_inds) in enumerate(zip(curr_regressor_results, keep_indices_per_subimage)):
             if len(keep_inds) == 0:
@@ -454,9 +460,6 @@ class VitBasedAnomalyDetector(AnomalyDetector):
             self.output_dir_test_dataset
         dynamic_threshold = None
         filter_thresh = None
-        # if dataset_type == "test":
-        #     dynamic_threshold=False
-            # filter_thresh=500
         dataloader = self.dataloaders[dataset_type]
         if os.path.exists(hashmap_locations_and_anomaly_scores_file):
             os.remove(hashmap_locations_and_anomaly_scores_file)
@@ -465,7 +468,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
         curr_regressor_results = []
         curr_all_scores_dict = []
         prev_image_id = None
-        # plot 10 first images
+        # plot first images examples
         plot=True
         i=0
         with torch.no_grad():
@@ -484,7 +487,7 @@ class VitBasedAnomalyDetector(AnomalyDetector):
                                                         dataset_type=dataset_type, plot=plot, dynamic_threshold=dynamic_threshold,
                                                         filter_thresh=filter_thresh)
                         i+=1
-                        if i>10:
+                        if i>EXAMPLES_NUM_TO_PLOT:
                             plot=False
                         curr_all_boxes = []
                         curr_regressor_results = []

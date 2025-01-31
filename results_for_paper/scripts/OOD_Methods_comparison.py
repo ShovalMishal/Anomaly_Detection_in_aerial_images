@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 
 if __name__ == '__main__':
     OOD_methods = ["MSP", "Energy", "ODIN", "ViM"]
-    OOD_methods_scores = [0.8569,0.8569,0.8767, 0.8769]
+    OOD_methods_scores = [0.7465,0.7515,0.7584, 0.7514]
     width = 0.35
     plt.rcParams.update({'font.size': 14})
     x = np.arange(len(OOD_methods))

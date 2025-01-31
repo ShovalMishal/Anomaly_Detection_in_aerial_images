@@ -21,7 +21,6 @@ class PrepareDataPyramid:
                     self.data["metadata_dirs"][0] = self.data["metadata_dirs"][0][:self.data["metadata_dirs"][0].find("DOTAV2/")+7]+data_type+"/meta"
                     self.data["save_dir"] = self.data["save_dir"][:self.data["save_dir"].find("data/")+5] +f"multiscale_normalized_dataset_rotated/{data_type}"
                     self.data["target_gsd"] = normalize_gsd
-                    self.data["normalize_accord_gsd"]=True
                     self.data["normalize_without_gsd"]=False
                     with open(self.config_template, 'w') as file:
                         json.dump(self.data, file, indent=4)
@@ -38,7 +37,6 @@ class PrepareDataPyramid:
                     self.data["metadata_dirs"][0] = self.data["metadata_dirs"][0][:self.data["metadata_dirs"][0].find("DOTAV2/")+7]+data_type+"/meta"
                     self.data["save_dir"] = self.data["save_dir"][:self.data["save_dir"].find("data/")+5] +f"multiscale_normalized_dataset_rotated_wo_gsd/{data_type}"
                     self.data["target_gsd"] = normalize_gsd
-                    self.data["normalize_accord_gsd"] = False
                     self.data["normalize_without_gsd"] = True
                     with open(self.config_template, 'w') as file:
                         json.dump(self.data, file, indent=4)

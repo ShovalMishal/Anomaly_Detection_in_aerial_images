@@ -1,8 +1,12 @@
-# Anomaly Detection in aerial images
-Using this repo current version, you can run the full OOD detection pipeline.
-First, it creates an anomaly detection experiment in order to filter out the objects from each image.
-Then, it trains the classifier on the anomaly detection results.
-Finally, testing ood model, based on the trained classifier in order to detect ood labels from the aerial images.
+# Is there a needle in the Haystack?
+We introduce a simple approach to identify novel class objects within aerial images, without specify these novel classes
+ahead of time. In our setting, we are equipped with a detector capable of detecting a closed set of objects 
+(e.g., vehicles, planes) but wish to determine if other, unspecified, object classes, that are of interest (say, ships),
+appear in the images as well. we propose a funnel approach that gradually reduces the number of patches of interest from 
+tens of millions to a short list of few tens of thousands. The patches in the short list are ranked automatically and 
+shown to a human operator. We therefore measure performance by ``Time-To-$1^{st}$'' (TT-1), i.e. the time it takes a 
+human to find the first instance of interesting new classes in aerial images, and show we are capable of producing such 
+a sample within the first few patches.
 
 ## Requirements
 You should clone this repo, mmrotate and mmdet repos.

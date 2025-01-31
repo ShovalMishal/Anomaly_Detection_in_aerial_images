@@ -6,8 +6,6 @@ import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader, WeightedRandomSampler
-from torchvision.models.resnet import model_urls
-from torchvision.datasets import ImageFolder
 from torchvision.transforms import (CenterCrop,
                                     Compose,
                                     Normalize,
@@ -18,17 +16,15 @@ from torchvision.transforms import (CenterCrop,
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
-from OOD_Upper_Bound.finetune_renet50_classifier import ResNet50LightningModule
-from OOD_Upper_Bound.finetune_vit_classifier import ViTLightningModule
-from OOD_Upper_Bound.ood_and_id_dataset import OODAndIDDataset
-from OOD_Upper_Bound.split_dataset_to_id_and_ood import create_ood_id_dataset
-from results import plot_confusion_matrix
+from Classifiers.finetune_resnet50_classifier import ResNet50LightningModule
+from Classifiers.finetune_vit_classifier import ViTLightningModule
+from ood_and_id_dataset import OODAndIDDataset
+from utils import create_ood_id_dataset
+from plot_results import plot_confusion_matrix
 from resnet_pytorch_small_images.train import create_and_train_model
 from resnet_pytorch_small_images.utils import get_network, best_acc_weights, most_recent_folder
 from utils import eval_model, ResizeLargestAndPad
 from transformers import ViTImageProcessor
-
-from OOD_Upper_Bound.ood_and_id_dataset import generate_label_mappers, generate_weights
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -40,11 +36,13 @@ class DatasetType(Enum):
 
 
 class Classifier:
-    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names):
         self.in_dist_train_dataloader = None
         self.in_dist_test_dataloader = None
         self.current_run_name = current_run_name
         self.classifier_cfg = classifier_cfg
+        self.data_source = data_source
+        self.ood_class_names = ood_class_names
         self.train_output_dir = os.path.join(output_dir, classifier_cfg.train_output_dir, classifier_cfg.type, current_run_name)
         self.checkpoint_path = os.path.join(self.train_output_dir, self.classifier_cfg.checkpoint_path)
         self.test_output_dir = os.path.join(output_dir, classifier_cfg.test_output_dir, classifier_cfg.type, current_run_name)
@@ -64,20 +62,26 @@ class Classifier:
                               target_root=os.path.join(data_source, "test_ood_id_split"),
                               ood_classes=ood_class_names)
 
-    def train(self):
-        pass
 
     def evaluate_classifier(self, best_model):
-        all_preds, all_labels = eval_model(dataloader=self.in_dist_test_dataloader, model=best_model, cache_dir=self.test_output_dir)
-        res_confusion_matrix = confusion_matrix(all_labels, all_preds)
-        plot_confusion_matrix(confusion_matrix=res_confusion_matrix,
-                              classes=self.in_dist_train_dataloader.dataset.classes,
-                              normalize=True,
-                              output_dir=self.test_output_dir)
-        plot_confusion_matrix(confusion_matrix=res_confusion_matrix,
-                              classes=self.in_dist_train_dataloader.dataset.classes,
-                              normalize=False,
-                              output_dir=self.test_output_dir)
+        self.logger.info("Evaluate trained model...")
+        if self.classifier_cfg.evaluate:
+            all_preds, all_labels = eval_model(dataloader=self.in_dist_test_dataloader, model=best_model, cache_dir=self.test_output_dir)
+            res_confusion_matrix = confusion_matrix(all_labels, all_preds)
+            plot_confusion_matrix(confusion_matrix=res_confusion_matrix,
+                                  classes=self.in_dist_train_dataloader.dataset.classes,
+                                  normalize=True,
+                                  output_dir=self.test_output_dir)
+            plot_confusion_matrix(confusion_matrix=res_confusion_matrix,
+                                  classes=self.in_dist_train_dataloader.dataset.classes,
+                                  normalize=False,
+                                  output_dir=self.test_output_dir)
+
+    def initiate_trainer(self):
+        pass
+
+    def train(self):
+        pass
 
 
 def collate_fn(examples):
@@ -127,8 +131,8 @@ def create_dataloaders(train_transforms, val_transforms, data_paths, dataset_typ
 
 
 class ResNetClassifier(Classifier):
-    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
-        super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names):
+        super().__init__(output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names)
         self.resize = None
 
     def get_resnet_transforms(self):
@@ -155,42 +159,44 @@ class ResNet50Classifier(ResNetClassifier):
         self.resize=224
 
     def train(self):
-        self.logger.info(f"Starting to train the ResNet50 classifier\n")
-        early_stop_callback = EarlyStopping(
-            monitor='validation_loss',
-            patience=3,
-            strict=True,
-            verbose=True,
-            mode='min'
-        )
-        checkpoint_callback = ModelCheckpoint(
-            monitor='validation_loss',
-            mode='min',
-            save_top_k=1,
-            dirpath=self.checkpoint_path,
-            filename='best_model',
-        )
+        self.initiate_trainer()
+        if self.classifier_cfg.retrain:
+            self.logger.info(f"Starting to train the ResNet50 classifier\n")
+            early_stop_callback = EarlyStopping(
+                monitor='validation_loss',
+                patience=3,
+                strict=True,
+                verbose=True,
+                mode='min'
+            )
+            checkpoint_callback = ModelCheckpoint(
+                monitor='validation_loss',
+                mode='min',
+                save_top_k=1,
+                dirpath=self.checkpoint_path,
+                filename='best_model',
+            )
 
-        logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
-        trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
-                          callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
-        ckpt_path = os.path.join(self.checkpoint_path, "best_model.ckpt") if self.classifier_cfg.resume else None
-        trainer.fit(self.model, ckpt_path=ckpt_path)
+            logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
+            trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
+                              callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
+            ckpt_path = os.path.join(self.checkpoint_path, "best_model.ckpt") if self.classifier_cfg.resume else None
+            trainer.fit(self.model, ckpt_path=ckpt_path)
 
-        """Finally, let's test the trained model on the test set:"""
+            """Finally, let's test the trained model on the test set:"""
 
-        results = trainer.test()
-        print(results)
+            results = trainer.test()
+            print(results)
 
-    def initiate_trainer(self, data_source, ood_class_names):
+    def initiate_trainer(self):
         self.logger.info(f"Initializing classifier\n")
-        self.preperae_id_ood_datasets(data_source, ood_class_names)
+        self.preperae_id_ood_datasets(self.data_source, self.ood_class_names)
         self.get_resnet_transforms()
         self.in_dist_train_dataloader, self.in_dist_val_dataloader, self.in_dist_test_dataloader = create_dataloaders(
             train_transforms=self.train_transforms, val_transforms=self.val_transforms,
-            data_paths={"train": os.path.join(data_source, "train_ood_id_split"),
-                        "val": os.path.join(data_source, "val_ood_id_split"),
-                        "test": os.path.join(data_source, "test_ood_id_split"),
+            data_paths={"train": os.path.join(self.data_source, "train_ood_id_split"),
+                        "val": os.path.join(self.data_source, "val_ood_id_split"),
+                        "test": os.path.join(self.data_source, "test_ood_id_split"),
                         }, dataset_type=DatasetType.IN_DISTRIBUTION, val_batch_size=self.classifier_cfg.val_batch_size,
             train_batch_size=self.classifier_cfg.train_batch_size,
             dataloader_num_workers=self.classifier_cfg.dataloader_num_workers,
@@ -230,19 +236,19 @@ class ResNet50Classifier(ResNetClassifier):
 
 
 class ResNet18Classifier(ResNetClassifier):
-    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
-        super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names):
+        super().__init__(output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names)
         self.resize=32
 
-    def initiate_trainer(self, data_source, ood_class_names):
+    def initiate_trainer(self):
         self.logger.info(f"Initializing classifier\n")
-        self.preperae_id_ood_datasets(data_source, ood_class_names)
+        self.preperae_id_ood_datasets(self.data_source, self.ood_class_names)
         self.get_resnet_transforms()
         self.in_dist_train_dataloader, self.in_dist_val_dataloader, self.in_dist_test_dataloader = create_dataloaders(
             train_transforms=self.train_transforms, val_transforms=self.val_transforms,
-            data_paths={"train": os.path.join(data_source, "train_ood_id_split"),
-                        "val": os.path.join(data_source, "val_ood_id_split"),
-                        "test": os.path.join(data_source, "test_ood_id_split"),
+            data_paths={"train": os.path.join(self.data_source, "train_ood_id_split"),
+                        "val": os.path.join(self.data_source, "val_ood_id_split"),
+                        "test": os.path.join(self.data_source, "test_ood_id_split"),
                         }, dataset_type=DatasetType.IN_DISTRIBUTION, val_batch_size=self.classifier_cfg.val_batch_size,
             train_batch_size=self.classifier_cfg.train_batch_size,
             dataloader_num_workers=self.classifier_cfg.dataloader_num_workers,
@@ -257,17 +263,19 @@ class ResNet18Classifier(ResNetClassifier):
 
 
     def train(self):
-        self.logger.info("Start training...")
-        create_and_train_model(train_dataloader=self.in_dist_train_dataloader,
-                               val_dataloader=self.in_dist_val_dataloader,
-                               checkpoint=self.checkpoint_path,
-                               log_dir=self.train_output_dir,
-                               logger=self.logger,
-                               net_type=self.classifier_cfg.type,
-                               resume=self.classifier_cfg.resume,
-                               max_epoch=self.classifier_cfg.max_epoch,
-                               milestones=self.classifier_cfg.milestones,
-                               loss_class_weights=self.classifier_cfg.loss_class_weights)
+        self.initiate_trainer()
+        if self.classifier_cfg.retrain:
+            self.logger.info("Start training...")
+            create_and_train_model(train_dataloader=self.in_dist_train_dataloader,
+                                   val_dataloader=self.in_dist_val_dataloader,
+                                   checkpoint=self.checkpoint_path,
+                                   log_dir=self.train_output_dir,
+                                   logger=self.logger,
+                                   net_type=self.classifier_cfg.type,
+                                   resume=self.classifier_cfg.resume,
+                                   max_epoch=self.classifier_cfg.max_epoch,
+                                   milestones=self.classifier_cfg.milestones,
+                                   loss_class_weights=self.classifier_cfg.loss_class_weights)
 
     def get_fine_tuned_model(self):
         args = SimpleNamespace()
@@ -282,8 +290,8 @@ class ResNet18Classifier(ResNetClassifier):
 
 
 class VitClassifier(Classifier):
-    def __init__(self, output_dir, classifier_cfg, logger, current_run_name):
-        super().__init__(output_dir, classifier_cfg, logger, current_run_name)
+    def __init__(self, output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names):
+        super().__init__(output_dir, classifier_cfg, logger, current_run_name, data_source, ood_class_names)
 
     def get_vit_transforms(self):
         processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
@@ -310,15 +318,15 @@ class VitClassifier(Classifier):
             ]
         )
 
-    def initiate_trainer(self, data_source, ood_class_names):
+    def initiate_trainer(self):
         self.logger.info(f"Initializing classifier\n")
-        self.preperae_id_ood_datasets(data_source, ood_class_names)
+        self.preperae_id_ood_datasets(self.data_source, self.ood_class_names)
         self.get_vit_transforms()
         self.in_dist_train_dataloader, self.in_dist_val_dataloader, self.in_dist_test_dataloader = create_dataloaders(
             train_transforms=self.train_transforms, val_transforms=self.val_transforms,
-            data_paths={"train": os.path.join(data_source, "train_ood_id_split"),
-                        "val": os.path.join(data_source, "val_ood_id_split"),
-                        "test": os.path.join(data_source, "test_ood_id_split"),
+            data_paths={"train": os.path.join(self.data_source, "train_ood_id_split"),
+                        "val": os.path.join(self.data_source, "val_ood_id_split"),
+                        "test": os.path.join(self.data_source, "test_ood_id_split"),
                         }, dataset_type=DatasetType.IN_DISTRIBUTION, val_batch_size=self.classifier_cfg.val_batch_size,
             train_batch_size=self.classifier_cfg.train_batch_size,
             dataloader_num_workers=self.classifier_cfg.dataloader_num_workers,
@@ -339,32 +347,34 @@ class VitClassifier(Classifier):
         self.model = self.model.to(device)
 
     def train(self):
-        self.logger.info(f"Starting to train the ViT classifier\n")
-        early_stop_callback = EarlyStopping(
-            monitor='validation_loss',
-            patience=3,
-            strict=True,
-            verbose=True,
-            mode='min'
-        )
-        checkpoint_callback = ModelCheckpoint(
-            monitor='validation_loss',
-            mode='min',
-            save_top_k=1,
-            dirpath=self.checkpoint_path,
-            filename='best_model',
-        )
+        self.initiate_trainer()
+        if self.classifier_cfg.retrain:
+            self.logger.info(f"Starting to train the ViT classifier\n")
+            early_stop_callback = EarlyStopping(
+                monitor='validation_loss',
+                patience=3,
+                strict=True,
+                verbose=True,
+                mode='min'
+            )
+            checkpoint_callback = ModelCheckpoint(
+                monitor='validation_loss',
+                mode='min',
+                save_top_k=1,
+                dirpath=self.checkpoint_path,
+                filename='best_model',
+            )
 
-        logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
-        trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
-                          callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
-        ckpt_path = os.path.join(self.checkpoint_path, "best_model.ckpt") if self.classifier_cfg.resume else None
-        trainer.fit(self.model, ckpt_path=ckpt_path)
+            logger = TensorBoardLogger(save_dir=os.path.join(self.train_output_dir, "tb_logs"), name=self.current_run_name)
+            trainer = Trainer(num_nodes=1, max_epochs=self.classifier_cfg.max_epoch,
+                              callbacks=[early_stop_callback, checkpoint_callback], logger=logger)
+            ckpt_path = os.path.join(self.checkpoint_path, "best_model.ckpt") if self.classifier_cfg.resume else None
+            trainer.fit(self.model, ckpt_path=ckpt_path)
 
-        """Finally, let's test the trained model on the test set:"""
+            """Finally, let's test the trained model on the test set:"""
 
-        results = trainer.test()
-        print(results)
+            results = trainer.test()
+            print(results)
 
     def get_fine_tuned_model(self):
         model = ViTLightningModule.load_from_checkpoint(

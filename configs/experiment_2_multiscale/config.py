@@ -9,15 +9,13 @@ ood_class_names = ['plane', 'baseball-diamond', 'bridge', 'ground-track-field',
          'helipad']
 
 prepare_data_pyramid_cfg = dict(skip_stage=True, use_gsd=True, normalize_sizes=[0.25, 0.5, 1, 1.5, 3, 5],
-                                config_template="/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/configs/experiment_multiscale/imgsplit_config.json")
+                                config_template="/home/shoval/Documents/Repositories/Anomaly_Detection_in_aerial_images/configs/experiment_2_multiscale/imgsplit_config.json")
 
 anomaly_detector_cfg = dict(
     train_dataloader=dict(
         batch_size=16,
         num_workers=16,
-        # num_workers=0,
         persistent_workers=True,
-        # persistent_workers=False,
         drop_last=False,
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
@@ -37,7 +35,7 @@ anomaly_detector_cfg = dict(
                     type='ConvertBoxType',
                     # box_type_mapping=dict(gt_bboxes='hbox')),
                     box_type_mapping=dict(gt_bboxes='rbox')),
-                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -68,7 +66,7 @@ anomaly_detector_cfg = dict(
                 dict(
                     type='ConvertBoxType',
                     box_type_mapping=dict(gt_bboxes='rbox')),
-                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -86,7 +84,7 @@ anomaly_detector_cfg = dict(
         sampler=dict(type='DefaultSampler', shuffle=False),
         dataset=dict(
             type='DOTAv2Dataset',
-            data_root='/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
+            data_root='/home/shoval/Documents/Repositories/data/multiscale_normalized_dataset_rotated/test/' if not runai_run else '/storage/shoval/datasets/gsd_normalized_dataset_rotated/test',
             ann_file='labelTxt/',
             data_prefix=dict(img_path='images/'),
             ood_labels=ood_class_names,
@@ -99,7 +97,7 @@ anomaly_detector_cfg = dict(
                 dict(
                     type='ConvertBoxType',
                     box_type_mapping=dict(gt_bboxes='rbox')),
-                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                 dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                 dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 dict(
@@ -119,7 +117,7 @@ anomaly_detector_cfg = dict(
     pretrained_weights="",
     checkpoint_key="teacher",
     vit_model_mode="class_token_self_attention",  # "class_token_self_attention", "last_block_output"
-
+    patches_per_image=500,
     vit_model_type="dino_vit",  # "dino_vit", "dino_mc_vit"
     data_output_dir_name="sampled_extracted_bboxes_data_regressor_ver",
     proposals_sizes=dict(square=(17, 17), horizontal=(11, 21), vertical=(21, 11)),
@@ -164,7 +162,7 @@ anomaly_detector_cfg = dict(
                         type='ConvertBoxType',
                         box_type_mapping=dict(gt_bboxes='rbox')),
                     # box_type_mapping=dict(gt_bboxes='hbox')),
-                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                     dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                     dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                     dict(
@@ -193,7 +191,7 @@ anomaly_detector_cfg = dict(
                     dict(
                         type='ConvertBoxType',
                         box_type_mapping=dict(gt_bboxes='rbox')),
-                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                     dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                     dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                     dict(
@@ -222,7 +220,7 @@ anomaly_detector_cfg = dict(
                     dict(
                         type='ConvertBoxType',
                         box_type_mapping=dict(gt_bboxes='rbox')),
-                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True),
+                    dict(type='mmdet.Resize', scale=(512, 512), keep_ratio=True, clip_object_border=False),
                     dict(type='Normalize', mean=(0, 0, 0), std=(255.0, 255.0, 255.0), to_rgb=False),
                     dict(type='Normalize', mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                     dict(
@@ -240,12 +238,6 @@ anomaly_detector_cfg = dict(
             checkpoint=dict(type='CheckpointHook', interval=1),
             sampler_seed=dict(type='DistSamplerSeedHook'),
             visualization=dict(type='mmdet.DetVisualizationHook'),
-            # early_stopping=dict(
-            #     type="EarlyStoppingHook",
-            #     monitor="dota/recall",
-            #     strict=True,
-            #     patience=5,
-            #     rule='greater')
         ),
         param_scheduler=[
             dict(
@@ -262,11 +254,6 @@ anomaly_detector_cfg = dict(
                 milestones=[11, 14],
                 gamma=0.1)
         ],
-        # optim_wrapper=dict(
-        #     type='OptimWrapper',
-        #     optimizer=dict(type='AdamW', lr=0.005, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.0001),
-        #     clip_grad=dict(max_norm=10, norm_type=2)
-        # ),
         optim_wrapper=dict(
             type='OptimWrapper',
             optimizer=dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001),
@@ -275,8 +262,6 @@ anomaly_detector_cfg = dict(
             type='RotLocalVisualizer',
             vis_backends=[dict(type='LocalVisBackend'), dict(type='TensorboardVisBackend')],
             name='visualizer'),
-        log_processor=dict(type='LogProcessor', window_size=50, by_epoch=True),
-        log_level='INFO',
         load_from=None,
         resume=True,
 
@@ -345,6 +330,6 @@ classifier_cfg = dict(type="resnet18",
                       loss_class_weights=True,
                       evaluate=True)
 
-OOD_detector_cfg = dict(type="ODIN",
-                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=50,
-                        rank_accord_features=True)
+OOD_detector_cfg = dict(type="ODIN", batch_size=100,
+                        ood_class_names=ood_class_names, save_outliers=True, num_of_outliers=250,
+                        rank_accord_features=True, patches_per_image=500, num_of_TT_1_original_images=0)
