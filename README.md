@@ -10,7 +10,7 @@ a sample within the first few patches.
 
 <p align="center">
   <img src="results_for_paper/figures_for_paper/09_ship_revealing_experiemnt_1.png" width="45%" alt="Novel Class Ship">
-  <img src="results_for_paper/figures_for_paper/10_small_vehicle_revealing_experiment_2.png" width="45%" alt="Novel Class Small Vehicle">
+  <img src="results_for_paper/figures_for_paper/10_small_vehicle_revealing_experiment_1.png" width="45%" alt="Novel Class Small Vehicle">
 </p>
 
 **Is there a needle in the Haystack?**: How many patches must a user inspect to detect the first instance of a new class (Time-To-First)? Given the DoTAv2 dataset and a detector trained on in-distribution classes **Small Vehicle, Large-Vehicle,** and **Swimming-Pool**, the algorithm analyzes all patches in the dataset, scores them, and presents them in order to the user.
